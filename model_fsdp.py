@@ -2,6 +2,7 @@ import torch
 import os
 # Set TOKENIZERS_PARALLELISM to true in environment variables
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
+os.environ["OMP_NUM_THREADS"] = "2"
 import torch.nn as nn  
 import copy
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM  
@@ -450,7 +451,9 @@ class DualModelTransformer(nn.Module):
                 else:  
                     # Subsequent iterations: Use last generated token's embedding  
                     combined_input = embedding_layer(generated_ids[:, -1:])  
+                    current_attention_mask = torch.ones((generated_ids.size(0), 1), device=generated_ids.device)  
                 # Generate next token  
+                # print(f"idx: {idx}, Combined input shape: {combined_input.shape}, current_attention_mask shape: {current_attention_mask.shape}")
                 model_output = self.small_model(  
                     inputs_embeds=combined_input,  
                     attention_mask=current_attention_mask,  
@@ -474,11 +477,11 @@ class DualModelTransformer(nn.Module):
             generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
     
             # Update attention mask  
-            if idx > 0:  # Already updated in the first iteration  
-                current_attention_mask = torch.cat(  
-                    [current_attention_mask, torch.ones((current_attention_mask.size(0), 1), device=current_attention_mask.device)],  
-                    dim=1  
-                )  
+            # if idx > 0:  # Already updated in the first iteration  
+            #     current_attention_mask = torch.cat(  
+            #         [current_attention_mask, torch.ones((current_attention_mask.size(0), 1), device=current_attention_mask.device)],  
+            #         dim=1  
+            #     )  
     
             # Decode current output  
             current_output = self.small_tokenizer.decode(generated_ids[0], skip_special_tokens=True)  
@@ -517,7 +520,9 @@ class DualModelTransformer(nn.Module):
             encoded = self.small_tokenizer(input_prompt, return_tensors="pt", padding=True, truncation=True, max_length=max_length)  
             input_ids = encoded['input_ids'].to(self.small_model.device)  
             attention_mask = encoded['attention_mask'].to(self.small_model.device)  
-  
+            
+        # inverse the input_ids to text
+        input_text = self.small_tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         batch_size = input_ids.shape[0]  
         generated_texts = []  
   
@@ -528,8 +533,10 @@ class DualModelTransformer(nn.Module):
                 max_length,  
                 temperature,  
                 sampling_method  
-            )  
+            )
+            generated_text = generated_text.replace(input_text[i], "").replace(self.small_tokenizer.eos_token, "").replace(self.small_tokenizer.pad_token, "").strip()
             generated_texts.append(generated_text)  
+            print(f"Input: {input_text[i]}\tGenerated: {generated_text}\n")
   
         return generated_texts[0] if len(generated_texts) == 1 else generated_texts  
   
@@ -849,6 +856,7 @@ def save_model_temp(model, path):
 
 def save_model(model, path):  
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)  
+    torch.distributed.barrier()  
     if dist.get_rank() == 0:  
         logger.info("Entering state_dict_type context manager for saving model.")  
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):  
