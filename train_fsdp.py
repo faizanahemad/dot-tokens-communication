@@ -1,4 +1,5 @@
-import os  
+import os 
+os.environ["TOKENIZERS_PARALLELISM"] = "true" 
 import torch  
 import torch.nn as nn  
 import torch.optim as optim  
@@ -47,17 +48,18 @@ config = {
     "stop_tokens": ["<|endoftext|>", ".", "!", "?"],  
     "small_model_dim": 1024,  
     "large_model_dim": 2048,  
-    "learning_rate": 1e-4,  
+    "learning_rate": 1e-3,  
     "batch_size": 8,  
-    "num_epochs": 3,  
-    "warmup_steps": 4,  
+    "num_epochs": 10,  
+    "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
-    "train_subset_size": 200,  # Set to None to use full dataset  
-    "test_subset_size": 20,    # Set to None to use full dataset  
+    "train_subset_size": 32,  # Set to None to use full dataset  
+    "test_subset_size": 32,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
     "gradient_accumulation_steps": 1,  
     "num_workers": 4,  
-    "max_length": 256,  
+    "max_length": 256, 
+    "scheduler": None, # "OneCycleLR"
 }  
   
 # Set random seeds for reproducibility  
@@ -68,9 +70,9 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)  
   
 set_seed(42)  
-  
+
 # Custom Dataset class  
-class GSM8KDataset(Dataset):  
+class GSM8KDataset(torch.utils.data.Dataset):  
     def __init__(self, dataset, tokenizer, max_length):  
         self.dataset = dataset  
         self.tokenizer = tokenizer  
@@ -82,13 +84,44 @@ class GSM8KDataset(Dataset):
         for item in tqdm(self.dataset, desc="Preprocessing data"):  
             question = item['question']  
             answer = item['answer']  
+  
+            # Construct the prompt  
             prompt = f"Solve the following math problem step by step. Show your work and provide the final answer after '#### '.\n\nQuestion: {question}\n\nStep by Step working and Answer:"  
-            inputs = self.tokenizer(prompt, max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")  
-            labels = self.tokenizer(answer + self.tokenizer.eos_token, max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")  
+  
+            # Tokenize the prompt with left padding  
+            self.tokenizer.padding_side = 'left'  
+            encoded_prompt = self.tokenizer(  
+                prompt,  
+                max_length=self.max_length,  
+                padding='max_length',  
+                truncation=True,  
+                return_tensors='pt',  
+                add_special_tokens=True  # Ensure [BOS] token is added if applicable  
+            )  
+  
+            input_ids = encoded_prompt['input_ids'].squeeze()  
+            attention_mask = encoded_prompt['attention_mask'].squeeze()  
+  
+            # Tokenize the answer with right padding  
+            self.tokenizer.padding_side = 'right'  
+            encoded_answer = self.tokenizer(  
+                answer,  
+                max_length=self.max_length,  
+                padding='max_length',  
+                truncation=True,  
+                return_tensors='pt',  
+                add_special_tokens=True  # Ensure [EOS] token is added if applicable  
+            )  
+  
+            labels = encoded_answer['input_ids'].squeeze()  
+            # Create labels' attention mask if needed  
+            labels_attention_mask = encoded_answer['attention_mask'].squeeze()  
+  
             cached_data.append({  
-                'input_ids': inputs['input_ids'].squeeze(),  
-                'attention_mask': inputs['attention_mask'].squeeze(),  
-                'labels': labels['input_ids'].squeeze()  
+                'input_ids': input_ids,  
+                'attention_mask': attention_mask,  
+                'labels': labels,  
+                'labels_attention_mask': labels_attention_mask  
             })  
         return cached_data  
   
@@ -146,7 +179,7 @@ def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):
   
     for step, batch in enumerate(progress_bar):  
         batch = {k: v.to(torch.cuda.current_device()) for k, v in batch.items()}  
-        outputs = model(batch['input_ids'], batch['attention_mask'], labels=batch['labels'])  
+        outputs = model(batch['input_ids'], batch['attention_mask'], labels=batch['labels'], labels_attention_mask=batch['labels_attention_mask'])  
         loss = outputs  
   
         loss = loss / config["gradient_accumulation_steps"]  
@@ -173,7 +206,7 @@ def extract_answer(text):
     answer = text[pos+4:].strip().replace("<|endoftext|>", "")  
     return ''.join(answer.split()).lower()  
   
-def evaluate(model, test_loader, tokenizer, config):  
+def evaluate(model, test_loader, tokenizer, config, print_generations=False):  
     model.eval()  
     total_loss = 0  
     correct = 0  
@@ -183,7 +216,7 @@ def evaluate(model, test_loader, tokenizer, config):
     with torch.no_grad():  
         for batch in progress_bar:  
             batch = {k: v.to(torch.cuda.current_device()) for k, v in batch.items()}  
-            outputs = model(batch['input_ids'], batch['attention_mask'], labels=batch['labels'])  
+            outputs = model(batch['input_ids'], batch['attention_mask'], labels=batch['labels'], labels_attention_mask=batch['labels_attention_mask'])  
             loss = outputs  
             total_loss += loss.item()  
   
@@ -191,8 +224,8 @@ def evaluate(model, test_loader, tokenizer, config):
             generated = model.generate(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'])  
   
             # Debug information  
-            print(f"Generated type: {type(generated)}, generated: {generated}")  
-            print(f"Generated shape: {generated.shape if isinstance(generated, torch.Tensor) else 'Not a tensor'}")  
+            # print(f"Generated type: {type(generated)}, generated: {generated}")  
+            # print(f"Generated shape: {generated.shape if isinstance(generated, torch.Tensor) else 'Not a tensor'}")  
   
             # Convert generated tensors to text  
             if isinstance(generated, torch.Tensor):  
@@ -211,6 +244,12 @@ def evaluate(model, test_loader, tokenizer, config):
             # Extract answers from generated and label texts  
             predicted_answers = [extract_answer(text) for text in generated_texts]  
             actual_answers = [extract_answer(text) for text in label_texts]  
+  
+            # if print_generations:
+            #     print("Generated:")
+            #     print(generated_texts)
+            #     print("Actual:")
+            #     print(actual_answers)
   
             # Compare answers  
             for pred, actual in zip(predicted_answers, actual_answers):  
@@ -246,22 +285,41 @@ def main():
     model = FSDP(model, **fsdp_config,)  
   
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=config["learning_rate"], weight_decay=config["weight_decay"])  
-    scheduler = OneCycleLR(  
-        optimizer,  
-        max_lr=config["learning_rate"],  
-        steps_per_epoch=len(train_loader) // config["gradient_accumulation_steps"],  
-        epochs=config["num_epochs"],  
-        pct_start=0.1  
-    )  
+    if config["scheduler"] == "OneCycleLR":
+        scheduler = OneCycleLR(  
+            optimizer,  
+            max_lr=config["learning_rate"],  
+            steps_per_epoch=len(train_loader) // config["gradient_accumulation_steps"],  
+            epochs=config["num_epochs"],  
+            pct_start=0.2  
+        )  
+    elif config["scheduler"] == "CosineAnnealingLR":
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["num_epochs"], eta_min=0, last_epoch=-1, verbose=False)
+    elif config["scheduler"] == "StepLR":
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+    elif config["scheduler"] == "MultiStepLR":
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 100, 150], gamma=0.1)
+    # add elif for linear warmup and then constant LR scheduler
+    elif config["scheduler"] == "WarmupScheduler":
+        def warmup_lambda(epoch):
+            if epoch < config["warmup_steps"]:
+                return float(epoch) / float(max(1, config["warmup_steps"]))
+            return 1.0
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lambda)
+    else:
+        # add scheduler which doesn't change the learning rate
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1)
   
     if dist.get_rank() == 0:  
         writer = SummaryWriter(log_dir='runs/gsm8k_training')  
   
     # test_loss, test_accuracy = evaluate(model, test_loader, tokenizer, config)  
+    # save_model(model, "initial_model.pth")  
     best_accuracy = 0  
     for epoch in range(config["num_epochs"]):  
         train_loss = train_epoch(model, epoch, train_loader, optimizer, scheduler, config)  
         test_loss, test_accuracy = evaluate(model, test_loader, tokenizer, config)  
+        train_loss, train_accuracy = evaluate(model, train_loader, tokenizer, config)
   
         if dist.get_rank() == 0:  
             logger.info(f"Epoch {epoch+1}/{config['num_epochs']}:")  
@@ -272,10 +330,26 @@ def main():
             writer.add_scalar('Loss/train', train_loss, epoch)  
             writer.add_scalar('Loss/test', test_loss, epoch)  
             writer.add_scalar('Accuracy/test', test_accuracy, epoch)  
+            
+            logger.info(f"Train Loss: {train_loss:.4f}")  
+            logger.info(f"Train Accuracy: {train_accuracy:.4f}") 
+            writer.add_scalar('Loss/train', train_loss, epoch)  
+            writer.add_scalar('Accuracy/train', train_accuracy, epoch)
   
             if test_accuracy > best_accuracy and epoch > 0:  
                 best_accuracy = test_accuracy  
                 save_model(model, "best_dual_model.pth")  
+                
+            # if last epoch, save the model
+            if epoch == config["num_epochs"] - 1:
+                # calcullate train_loss and train accuracy
+                # train_loss, train_accuracy = evaluate(model, train_loader, tokenizer, config, print_generations=True)
+                logger.info(f"Train Loss: {train_loss:.4f}")  
+                logger.info(f"Train Accuracy: {train_accuracy:.4f}") 
+                writer.add_scalar('Loss/train', train_loss, epoch)  
+                writer.add_scalar('Accuracy/train', train_accuracy, epoch)
+                # save the model
+                save_model(model, "final_dual_model.pth")
   
     if dist.get_rank() == 0:  
         writer.close()  
