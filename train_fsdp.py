@@ -73,13 +73,13 @@ config = {
 
 config = {  
     "large_model_name": "meta-llama/Llama-3.2-3B-Instruct",  
-    "small_model_name": "meta-llama/Llama-3.2-3B-Instruct",  
+    "small_model_name": "meta-llama/Llama-3.2-1B-Instruct",  
     "stop_tokens": [], # [".", "!", "?"],  
-    "small_model_dim": 3072,  
+    "small_model_dim": 2048,  
     "large_model_dim": 3072,  
     "learning_rate": 1e-3,  
     "batch_size": 8,  
-    "num_epochs": 2,  
+    "num_epochs": 50,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
     "train_subset_size": 8,  # Set to None to use full dataset  
