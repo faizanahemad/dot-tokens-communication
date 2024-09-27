@@ -3,6 +3,7 @@ import os
 from my_datasets import get_validation_split  
 os.environ["TOKENIZERS_PARALLELISM"] = "true"  
 os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["HF_TOKEN"] = "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"
 import torch  
 import torch.nn as nn  
 import torch.optim as optim  
@@ -54,7 +55,31 @@ config = {
     "large_model_dim": 2048,  
     "learning_rate": 1e-3,  
     "batch_size": 8,  
-    "num_epochs": 1,  
+    "num_epochs": 100,  
+    "warmup_steps": 10,  
+    "max_grad_norm": 1.0,  
+    "train_subset_size": 32,  # Set to None to use full dataset  
+    "test_subset_size": 32,    # Set to None to use full dataset  
+    "weight_decay": 0.001,  
+    "gradient_accumulation_steps": 1,  
+    "num_workers": 4,  
+    "max_input_length": 256,  
+    "max_output_length": 8,
+    "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
+    "dataset_name": "complete_the_sentence",  # Specify the dataset to use  
+    "seed": 42,  
+}  
+
+
+config = {  
+    "large_model_name": "meta-llama/Llama-3.2-3B-Instruct",  
+    "small_model_name": "meta-llama/Llama-3.2-3B-Instruct",  
+    "stop_tokens": [], # [".", "!", "?"],  
+    "small_model_dim": 3072,  
+    "large_model_dim": 3072,  
+    "learning_rate": 1e-3,  
+    "batch_size": 8,  
+    "num_epochs": 100,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
     "train_subset_size": 32,  # Set to None to use full dataset  
