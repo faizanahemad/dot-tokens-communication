@@ -667,7 +667,7 @@ class DualModelTransformer(nn.Module):
         generated_texts = []  
         # print(input_ids[:, -32:])
         # print(input_ids.shape)
-        generated = self.generate_text(  
+        generated = self.simple_generate_new_v2(  # generate_text
                 input_ids=input_ids,  
                 attention_mask=attention_mask,  
                 max_length=max_length,

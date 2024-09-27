@@ -77,13 +77,13 @@ config = {
     "stop_tokens": [], # [".", "!", "?"],  
     "small_model_dim": 2048,  
     "large_model_dim": 3072,  
-    "learning_rate": 1e-3,  
-    "batch_size": 8,  
+    "learning_rate": 1e-4,  
+    "batch_size": 16,  
     "num_epochs": 50,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
-    "train_subset_size": 8,  # Set to None to use full dataset  
-    "test_subset_size": 8,    # Set to None to use full dataset  
+    "train_subset_size": None,  # Set to None to use full dataset  
+    "test_subset_size": None,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
     "gradient_accumulation_steps": 1,  
     "num_workers": 4,  

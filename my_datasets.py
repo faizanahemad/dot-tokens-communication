@@ -484,7 +484,54 @@ class FillTheBlankDataset(BaseDataset):
             {"sentence": "Don't throw the baby out with the ___.", "answer": "bathwater"},  
             {"sentence": "A bird in the hand is worth two in the ___.", "answer": "bush"},  
         ]  
-        return data[:self.subset_size] 
+        
+        holdout_test_set = [  
+            # Proverbs and common sayings  
+            {"sentence": "A rolling stone gathers no ___.", "answer": "moss"},  
+            {"sentence": "Absence makes the heart grow ___.", "answer": "fonder"},  
+            {"sentence": "Look before you ___.", "answer": "leap"},  
+            {"sentence": "Make hay while the sun ___.", "answer": "shines"},  
+            {"sentence": "Too many cooks spoil the ___.", "answer": "broth"},  
+            {"sentence": "A watched pot never ___.", "answer": "boils"},  
+            {"sentence": "When it rains, it ___.", "answer": "pours"},  
+            {"sentence": "The grass is always greener on the other side of the ___.", "answer": "fence"},  
+            {"sentence": "Don't put all your eggs in one ___.", "answer": "basket"},  
+            {"sentence": "A chain is only as strong as its weakest ___.", "answer": "link"},  
+        
+            # Wise musings and philosophical statements  
+            {"sentence": "The unexamined life is not worth ___.", "answer": "living"},  
+            {"sentence": "I think, therefore I ___.", "answer": "am"},  
+            {"sentence": "Knowledge is knowing a tomato is a fruit; wisdom is not putting it in a ___.", "answer": "salad"},  
+            {"sentence": "The greatest wealth is to live content with ___.", "answer": "little"},  
+            {"sentence": "Life is what happens when you're busy making other ___.", "answer": "plans"},  
+        
+            # Common facts  
+            {"sentence": "The largest planet in our solar system is ___.", "answer": "Jupiter"},  
+            {"sentence": "The chemical symbol for gold is ___.", "answer": "Au"},  
+            {"sentence": "Water boils at 100 degrees ___.", "answer": "Celsius"},  
+            {"sentence": "The speed of light is approximately 300,000 kilometers per ___.", "answer": "second"},  
+            {"sentence": "The currency of Japan is the ___.", "answer": "Yen"},  
+        
+            # Literary references  
+            {"sentence": "Call me ___.", "answer": "Ishmael"},  
+            {"sentence": "It was a bright cold day in April, and the clocks were striking ___.", "answer": "thirteen"},  
+            {"sentence": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a ___.", "answer": "wife"},  
+            {"sentence": "To be, or not to be: that is the ___.", "answer": "question"},  
+            {"sentence": "All that is gold does not ___.", "answer": "glitter"},  
+        
+            # More challenging examples  
+            {"sentence": "The proof of the ___ is in the eating.", "answer": "pudding"},  
+            {"sentence": "A ___ in sheep's clothing.", "answer": "wolf"},  
+            {"sentence": "Don't throw the baby out with the ___.", "answer": "bathwater"},  
+            {"sentence": "The road to ___ is paved with good intentions.", "answer": "hell"},  
+            {"sentence": "Blood is thicker than ___.", "answer": "water"}  
+        ]  
+        if self.split == 'train':
+            return data[:self.subset_size] if self.subset_size else data
+        elif self.split == 'test':
+            return holdout_test_set[:self.subset_size] if self.subset_size else holdout_test_set
+        else:
+            raise ValueError(f"Invalid split: {self.split}")
   
     def preprocess_data(self):  
         self.cached_data = []  
@@ -622,7 +669,92 @@ class CompleteTheSentenceDataset(BaseDataset):
             {"sentence": "A rolling stone gathers no ___.", "completion": "moss"},  
             {"sentence": "When the cat's away, the mice will ___.", "completion": "play"},  
         ]  
-        return data[:self.subset_size]
+        
+        holdout_test_set = [  
+            # Proverbs and common sayings (Easy)  
+            {"sentence": "A picture is worth a thousand ___.", "completion": "words", "difficulty": "easy"},  
+            {"sentence": "Make hay while the sun ___.", "completion": "shines", "difficulty": "easy"},  
+            {"sentence": "The early bird catches the ___.", "completion": "worm", "difficulty": "easy"},  
+            {"sentence": "Look before you ___.", "completion": "leap", "difficulty": "easy"},  
+            {"sentence": "Better safe than ___.", "completion": "sorry", "difficulty": "easy"},  
+        
+            # Proverbs and common sayings (Medium)  
+            {"sentence": "A chain is only as strong as its weakest ___.", "completion": "link", "difficulty": "medium"},  
+            {"sentence": "The apple doesn't fall far from the ___.", "completion": "tree", "difficulty": "medium"},  
+            {"sentence": "Don't put all your eggs in one ___.", "completion": "basket", "difficulty": "medium"},  
+            {"sentence": "A watched pot never ___.", "completion": "boils", "difficulty": "medium"},  
+            {"sentence": "The grass is always greener on the other side of the ___.", "completion": "fence", "difficulty": "medium"},  
+        
+            # Proverbs and common sayings (Hard)  
+            {"sentence": "The cobbler's children have no ___.", "completion": "shoes", "difficulty": "hard"},  
+            {"sentence": "A rising tide lifts all ___.", "completion": "boats", "difficulty": "hard"},  
+            {"sentence": "The proof of the pudding is in the ___.", "completion": "eating", "difficulty": "hard"},  
+            {"sentence": "Don't throw the baby out with the ___.", "completion": "bathwater", "difficulty": "hard"},  
+            {"sentence": "The exception proves the ___.", "completion": "rule", "difficulty": "hard"},  
+        
+            # Wise musings and philosophical statements (Easy)  
+            {"sentence": "Knowledge is ___.", "completion": "power", "difficulty": "easy"},  
+            {"sentence": "Life is what happens when you're busy making other ___.", "completion": "plans", "difficulty": "easy"},  
+            {"sentence": "The journey of a thousand miles begins with a single ___.", "completion": "step", "difficulty": "easy"},  
+            {"sentence": "United we stand, divided we ___.", "completion": "fall", "difficulty": "easy"},  
+            {"sentence": "To err is human, to forgive ___.", "completion": "divine", "difficulty": "easy"},  
+        
+            # Wise musings and philosophical statements (Medium)  
+            {"sentence": "The unexamined life is not worth ___.", "completion": "living", "difficulty": "medium"},  
+            {"sentence": "We are what we repeatedly ___.", "completion": "do", "difficulty": "medium"},  
+            {"sentence": "The only true wisdom is in knowing you know ___.", "completion": "nothing", "difficulty": "medium"},  
+            {"sentence": "He who has a why to live can bear almost any ___.", "completion": "how", "difficulty": "medium"},  
+            {"sentence": "The greatest wealth is to live content with ___.", "completion": "little", "difficulty": "medium"},  
+        
+            # Wise musings and philosophical statements (Hard)  
+            {"sentence": "Cogito, ergo ___.", "completion": "sum", "difficulty": "hard"},  
+            {"sentence": "The owl of Minerva spreads its wings only with the falling of the ___.", "completion": "dusk", "difficulty": "hard"},  
+            {"sentence": "That which does not kill us makes us ___.", "completion": "stronger", "difficulty": "hard"},  
+            {"sentence": "The life which is unexamined is not worth ___.", "completion": "living", "difficulty": "hard"},  
+            {"sentence": "Man is condemned to be ___.", "completion": "free", "difficulty": "hard"},  
+        
+            # Literary references (Easy)  
+            {"sentence": "To be, or not to be: that is the ___.", "completion": "question", "difficulty": "easy"},  
+            {"sentence": "It was the best of times, it was the worst of ___.", "completion": "times", "difficulty": "easy"},  
+            {"sentence": "Call me ___.", "completion": "Ishmael", "difficulty": "easy"},  
+            {"sentence": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a ___.", "completion": "wife", "difficulty": "easy"},  
+            {"sentence": "All animals are equal, but some animals are more equal than ___.", "completion": "others", "difficulty": "easy"},  
+        
+            # Literary references (Medium)  
+            {"sentence": "In the beginning God created the heaven and the ___.", "completion": "earth", "difficulty": "medium"},  
+            {"sentence": "It was a bright cold day in April, and the clocks were striking ___.", "completion": "thirteen", "difficulty": "medium"},  
+            {"sentence": "Two roads diverged in a yellow wood, and I— I took the one less traveled ___.", "completion": "by", "difficulty": "medium"},  
+            {"sentence": "All happy families are alike; each unhappy family is unhappy in its own ___.", "completion": "way", "difficulty": "medium"},  
+            {"sentence": "Ask not what your country can do for you – ask what you can do for your ___.", "completion": "country", "difficulty": "medium"},  
+        
+            # Literary references (Hard)  
+            {"sentence": "Stately, plump Buck Mulligan came from the stairhead, bearing a bowl of lather on which a mirror and a razor lay ___.", "completion": "crossed", "difficulty": "hard"},  
+            {"sentence": "Many years later, as he faced the firing squad, Colonel Aureliano Buendía was to remember that distant afternoon when his father took him to discover ___.", "completion": "ice", "difficulty": "hard"},  
+            {"sentence": "The sky above the port was the color of television, tuned to a dead ___.", "completion": "channel", "difficulty": "hard"},  
+            {"sentence": "If you really want to hear about it, the first thing you'll probably want to know is where I was born, and what my lousy childhood was like, and how my parents were occupied and all before they had me, and all that David Copperfield kind of ___.", "completion": "crap", "difficulty": "hard"},  
+            {"sentence": "He was an old man who fished alone in a skiff in the Gulf Stream and he had gone eighty-four days now without taking a ___.", "completion": "fish", "difficulty": "hard"},  
+        
+            # More challenging examples (Medium)  
+            {"sentence": "The elephant in the ___.", "completion": "room", "difficulty": "medium"},  
+            {"sentence": "Barking up the wrong ___.", "completion": "tree", "difficulty": "medium"},  
+            {"sentence": "Every dog has its ___.", "completion": "day", "difficulty": "medium"},  
+            {"sentence": "The devil is in the ___.", "completion": "details", "difficulty": "medium"},  
+            {"sentence": "A penny for your ___.", "completion": "thoughts", "difficulty": "medium"},  
+        
+            # More challenging examples (Hard)  
+            {"sentence": "The road to hell is paved with good ___.", "completion": "intentions", "difficulty": "hard"},  
+            {"sentence": "A wolf in sheep's ___.", "completion": "clothing", "difficulty": "hard"},  
+            {"sentence": "The pot calling the kettle ___.", "completion": "black", "difficulty": "hard"},  
+            {"sentence": "Discretion is the better part of ___.", "completion": "valor", "difficulty": "hard"},  
+            {"sentence": "The writing is on the ___.", "completion": "wall", "difficulty": "hard"}  
+        ]  
+
+        if self.split == 'train':
+            return data[:self.subset_size] if self.subset_size else data
+        elif self.split == 'test':
+            return holdout_test_set[:self.subset_size] if self.subset_size else holdout_test_set
+        else:
+            raise ValueError(f"Invalid split: {self.split}")
   
     def preprocess_data(self):  
         self.cached_data = []  
