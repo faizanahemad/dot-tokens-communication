@@ -62,13 +62,13 @@ class DualModelTransformer(nn.Module):
             nn.Linear(small_model_dim, large_model_dim, dtype=torch.bfloat16),  
             nn.GELU(),  
             nn.Linear(large_model_dim, large_model_dim, dtype=torch.bfloat16),
-            # nn.LayerNorm(large_model_dim, dtype=torch.bfloat16)
+            nn.LayerNorm(large_model_dim, dtype=torch.bfloat16)
         )  
         self.ffn_large_to_small = nn.Sequential(  
             nn.Linear(large_model_dim, small_model_dim, dtype=torch.bfloat16),  
             nn.GELU(),  
             nn.Linear(small_model_dim, small_model_dim, dtype=torch.bfloat16),
-            # nn.LayerNorm(small_model_dim, dtype=torch.bfloat16)
+            nn.LayerNorm(small_model_dim, dtype=torch.bfloat16)
         )  
   
         # Initialize FFN parameters  
@@ -76,6 +76,7 @@ class DualModelTransformer(nn.Module):
         self._init_weights(self.ffn_large_to_small)  
 
         self.embedding_layer = copy.deepcopy(self._get_embedding_layer(self.small_model))
+        self.embedding_layer_large = copy.deepcopy(self._get_embedding_layer(self.large_model))
 
         # Enable gradient checkpointing  
         if enable_checkpointing:  
@@ -98,6 +99,7 @@ class DualModelTransformer(nn.Module):
             self.ffn_small_to_large = FSDP(self.ffn_small_to_large, **fsdp_config)  
             self.ffn_large_to_small = FSDP(self.ffn_large_to_small, **fsdp_config)  
             self.embedding_layer = FSDP(self.embedding_layer, **fsdp_config)
+            self.embedding_layer_large = FSDP(self.embedding_layer_large, **fsdp_config)
   
         # Initialize tokenizers  
         self.large_tokenizer = AutoTokenizer.from_pretrained(large_model_name, trust_remote_code=True)  
@@ -389,12 +391,13 @@ class DualModelTransformer(nn.Module):
 
     
     
-    def simple_generate_new_v2(  self,
+    def simple_baseline(  self,
         input_ids: torch.Tensor,  
         attention_mask: torch.Tensor,  
         max_length,
         temperature: float = 1.0,  
-        sampling_method: str = "greedy"  
+        sampling_method: str = "greedy",
+        small_model_or_large_model: str = "small"
     ) -> str:  
         """  
         Generates text using the embedding layer and ensures positional embeddings are correctly handled.  
@@ -411,8 +414,13 @@ class DualModelTransformer(nn.Module):
             str: Newly generated text as a string.  
         """  
         tokenizer = self.small_tokenizer
-        model = self.small_model
-        embedding_layer = self.embedding_layer
+        if small_model_or_large_model == "small":
+            model = self.small_model
+            embedding_layer = self.embedding_layer
+        else:
+            model = self.large_model
+            embedding_layer = self.embedding_layer_large
+        
         model.eval()  
         device = input_ids.device  
     
@@ -641,7 +649,8 @@ class DualModelTransformer(nn.Module):
         input_prompt: Optional[Union[str, List[str]]] = None,  
         max_length: Optional[int] = None,  
         temperature: float = 1.0,  
-        sampling_method: str = "greedy"  
+        sampling_method: str = "greedy",
+        mode: str = "baseline"
     ) -> Union[str, List[str]]:  
         self.small_model.eval()
         self.large_model.eval()
@@ -667,7 +676,26 @@ class DualModelTransformer(nn.Module):
         generated_texts = []  
         # print(input_ids[:, -32:])
         # print(input_ids.shape)
-        generated = self.simple_generate_new_v2(  # generate_text
+        if mode == "baseline":
+            generated = self.simple_baseline(  # generate_text # simple_generate_new_v2
+                input_ids=input_ids,  
+                attention_mask=attention_mask,  
+                max_length=max_length,
+                temperature=temperature,  
+                sampling_method=sampling_method,
+                small_model_or_large_model="small"
+            )  
+        elif mode == "large-baseline":
+            generated = self.simple_baseline(  # generate_text # simple_generate_new_v2
+                input_ids=input_ids,  
+                attention_mask=attention_mask,  
+                max_length=max_length,
+                temperature=temperature,  
+                sampling_method=sampling_method,
+                small_model_or_large_model="large"
+            )  
+        else:
+            generated = self.generate_text(  # generate_text # simple_generate_new_v2
                 input_ids=input_ids,  
                 attention_mask=attention_mask,  
                 max_length=max_length,

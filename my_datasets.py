@@ -428,7 +428,7 @@ def get_dataset_class(dataset_name):
 class FillTheBlankDataset(BaseDataset):  
     def load_data(self):  
         # Manually create the dataset  
-        data = [  
+        data = ([  
             # Proverbs and common sayings  
             {"sentence": "The quick brown ___ jumps over the lazy dog.", "answer": "fox"},  
             {"sentence": "A stitch in time saves ___.", "answer": "nine"},  
@@ -471,7 +471,7 @@ class FillTheBlankDataset(BaseDataset):
             {"sentence": "Mount Everest is the world's highest ___.", "answer": "mountain"},  
               
             # Literary references  
-            {"sentence": "To be, or not to be: that is the ___.", "answer": "question"},  
+            
             {"sentence": "It was the best of times, it was the ___ of times.", "answer": "worst"},  
             {"sentence": "All animals are equal, but some animals are more ___ than others.", "answer": "equal"},  
             {"sentence": "The ___ that men do lives after them; The good is oft interred with their bones.", "answer": "evil"},  
@@ -483,7 +483,512 @@ class FillTheBlankDataset(BaseDataset):
             {"sentence": "The road to ___ is paved with good intentions.", "answer": "hell"},  
             {"sentence": "Don't throw the baby out with the ___.", "answer": "bathwater"},  
             {"sentence": "A bird in the hand is worth two in the ___.", "answer": "bush"},  
-        ]  
+        ]  + [  
+            {  
+                "sentence": "A penny for your ___.",  
+                "answer": "thoughts",  
+                "theme": "Proverbs and Common Sayings",  
+                "difficulty": "Easy",  
+                "cultural_origin": "Western",  
+                "time_period": "16th Century"  
+            },  
+            {  
+                "sentence": "The unexamined life is not worth ___.",  
+                "answer": "living",  
+                "theme": "Philosophical Statements",  
+                "difficulty": "Medium",  
+                "cultural_origin": "Ancient Greek",  
+                "time_period": "Classical"  
+            },  
+            {  
+                "sentence": "It was the best of times, it was the ___ of times.",  
+                "answer": "worst",  
+                "theme": "Literary References",  
+                "difficulty": "Medium",  
+                "cultural_origin": "Western",  
+                "time_period": "19th Century"  
+            },  
+            {  
+                "sentence": "The chemical symbol for potassium is ___.",  
+                "answer": "K",  
+                "theme": "Scientific Concepts",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "Break the ___.",  
+                "answer": "ice",  
+                "theme": "Modern Idioms",  
+                "difficulty": "Easy",  
+                "cultural_origin": "Western",  
+                "time_period": "20th Century"  
+            },  
+        ]  + [  
+            # Proverbs and Common Sayings  
+            {  
+                "sentence": "A penny for your ___.",  
+                "answer": "thoughts",  
+                "theme": "Proverbs and Common Sayings",  
+                "difficulty": "Easy",  
+                "cultural_origin": "Western",  
+                "time_period": "16th Century"  
+            },  
+            {  
+                "sentence": "A picture is worth a thousand ___.",  
+                "answer": "words",  
+                "theme": "Proverbs and Common Sayings",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "When in Rome, do as the Romans ___.",  
+                "answer": "do",  
+                "theme": "Proverbs and Common Sayings",  
+                "difficulty": "Easy",  
+                "cultural_origin": "Western",  
+                "time_period": "Ancient"  
+            },  
+            {  
+                "sentence": "The early bird catches the ___.",  
+                "answer": "worm",  
+                "theme": "Proverbs and Common Sayings",  
+                "difficulty": "Easy",  
+                "cultural_origin": "English",  
+                "time_period": "17th Century"  
+            },  
+            {  
+                "sentence": "A rolling stone gathers no ___.",  
+                "answer": "moss",  
+                "theme": "Proverbs and Common Sayings",  
+                "difficulty": "Medium",  
+                "cultural_origin": "Latin",  
+                "time_period": "Ancient"  
+            },  
+            
+            # Philosophical Statements  
+            {  
+                "sentence": "I think, therefore I ___.",  
+                "answer": "am",  
+                "theme": "Philosophical Statements",  
+                "difficulty": "Medium",  
+                "cultural_origin": "French",  
+                "time_period": "17th Century"  
+            },  
+            {  
+                "sentence": "The unexamined life is not worth ___.",  
+                "answer": "living",  
+                "theme": "Philosophical Statements",  
+                "difficulty": "Medium",  
+                "cultural_origin": "Ancient Greek",  
+                "time_period": "Classical"  
+            },  
+            {  
+                "sentence": "To be or not to be, that is the ___.",  
+                "answer": "question",  
+                "theme": "Philosophical Statements",  
+                "difficulty": "Easy",  
+                "cultural_origin": "English",  
+                "time_period": "16th Century"  
+            },  
+            {  
+                "sentence": "The only thing we have to fear is fear ___.",  
+                "answer": "itself",  
+                "theme": "Philosophical Statements",  
+                "difficulty": "Medium",  
+                "cultural_origin": "American",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "Cogito, ergo ___.",  
+                "answer": "sum",  
+                "theme": "Philosophical Statements",  
+                "difficulty": "Hard",  
+                "cultural_origin": "Latin",  
+                "time_period": "17th Century"  
+            },  
+            
+            # Scientific Concepts  
+            {  
+                "sentence": "The chemical symbol for gold is ___.",  
+                "answer": "Au",  
+                "theme": "Scientific Concepts",  
+                "difficulty": "Medium",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "E = mc^2 is Einstein's theory of ___.",  
+                "answer": "relativity",  
+                "theme": "Scientific Concepts",  
+                "difficulty": "Medium",  
+                "cultural_origin": "International",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "The powerhouse of the cell is the ___.",  
+                "answer": "mitochondria",  
+                "theme": "Scientific Concepts",  
+                "difficulty": "Medium",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "The speed of light is approximately 300,000 kilometers per ___.",  
+                "answer": "second",  
+                "theme": "Scientific Concepts",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "The atomic number of carbon is ___.",  
+                "answer": "6",  
+                "theme": "Scientific Concepts",  
+                "difficulty": "Hard",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            
+            # Literary References  
+            {  
+                "sentence": "It was the best of times, it was the ___ of times.",  
+                "answer": "worst",  
+                "theme": "Literary References",  
+                "difficulty": "Medium",  
+                "cultural_origin": "English",  
+                "time_period": "19th Century"  
+            },  
+            {  
+                "sentence": "Call me ___.",  
+                "answer": "Ishmael",  
+                "theme": "Literary References",  
+                "difficulty": "Medium",  
+                "cultural_origin": "American",  
+                "time_period": "19th Century"  
+            },  
+            {  
+                "sentence": "All animals are equal, but some animals are more ___ than others.",  
+                "answer": "equal",  
+                "theme": "Literary References",  
+                "difficulty": "Medium",  
+                "cultural_origin": "English",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "It was a bright cold day in April, and the clocks were striking ___.",  
+                "answer": "thirteen",  
+                "theme": "Literary References",  
+                "difficulty": "Hard",  
+                "cultural_origin": "English",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "To be, or not to be: that is the ___.",  
+                "answer": "question",  
+                "theme": "Literary References",  
+                "difficulty": "Easy",  
+                "cultural_origin": "English",  
+                "time_period": "16th Century"  
+            },  
+            
+            # Historical Facts  
+            {  
+                "sentence": "The Declaration of Independence was signed in ___.",  
+                "answer": "1776",  
+                "theme": "Historical Facts",  
+                "difficulty": "Easy",  
+                "cultural_origin": "American",  
+                "time_period": "18th Century"  
+            },  
+            {  
+                "sentence": "The Berlin Wall fell in ___.",  
+                "answer": "1989",  
+                "theme": "Historical Facts",  
+                "difficulty": "Medium",  
+                "cultural_origin": "German",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "The French Revolution began in ___.",  
+                "answer": "1789",  
+                "theme": "Historical Facts",  
+                "difficulty": "Medium",  
+                "cultural_origin": "French",  
+                "time_period": "18th Century"  
+            },  
+            {  
+                "sentence": "The first moon landing occurred in ___.",  
+                "answer": "1969",  
+                "theme": "Historical Facts",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "The Magna Carta was signed in ___.",  
+                "answer": "1215",  
+                "theme": "Historical Facts",  
+                "difficulty": "Hard",  
+                "cultural_origin": "English",  
+                "time_period": "Medieval"  
+            },  
+            
+            # Geography  
+            {  
+                "sentence": "The capital of Japan is ___.",  
+                "answer": "Tokyo",  
+                "theme": "Geography",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "The longest river in the world is the ___.",  
+                "answer": "Nile",  
+                "theme": "Geography",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Ancient"  
+            },  
+            {  
+                "sentence": "The Great Barrier Reef is located off the coast of ___.",  
+                "answer": "Australia",  
+                "theme": "Geography",  
+                "difficulty": "Medium",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "The highest mountain in North America is ___.",  
+                "answer": "Denali",  
+                "theme": "Geography",  
+                "difficulty": "Hard",  
+                "cultural_origin": "North American",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "The Sahara Desert is located primarily in ___.",  
+                "answer": "Africa",  
+                "theme": "Geography",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Ancient"  
+            },  
+            
+            # Modern Idioms  
+            {  
+                "sentence": "Break the ___.",  
+                "answer": "ice",  
+                "theme": "Modern Idioms",  
+                "difficulty": "Easy",  
+                "cultural_origin": "Western",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "It's not rocket ___.",  
+                "answer": "science",  
+                "theme": "Modern Idioms",  
+                "difficulty": "Easy",  
+                "cultural_origin": "American",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "The ball is in your ___.",  
+                "answer": "court",  
+                "theme": "Modern Idioms",  
+                "difficulty": "Medium",  
+                "cultural_origin": "Western",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "Barking up the wrong ___.",  
+                "answer": "tree",  
+                "theme": "Modern Idioms",  
+                "difficulty": "Medium",  
+                "cultural_origin": "English",  
+                "time_period": "19th Century"  
+            },  
+            {  
+                "sentence": "Bite off more than you can ___.",  
+                "answer": "chew",  
+                "theme": "Modern Idioms",  
+                "difficulty": "Medium",  
+                "cultural_origin": "American",  
+                "time_period": "19th Century"  
+            },  
+            
+            # Mathematics  
+            {  
+                "sentence": "The square root of 64 is ___.",  
+                "answer": "8",  
+                "theme": "Mathematics",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Ancient"  
+            },  
+            {  
+                "sentence": "Pi is approximately equal to ___.",  
+                "answer": "3.14159",  
+                "theme": "Mathematics",  
+                "difficulty": "Medium",  
+                "cultural_origin": "International",  
+                "time_period": "Ancient"  
+            },  
+            {  
+                "sentence": "In a right-angled triangle, the square of the hypotenuse is equal to the sum of the squares of the other two ___.",  
+                "answer": "sides",  
+                "theme": "Mathematics",  
+                "difficulty": "Hard",  
+                "cultural_origin": "Greek",  
+                "time_period": "Ancient"  
+            },  
+            {  
+                "sentence": "The sum of the angles in a triangle is ___ degrees.",  
+                "answer": "180",  
+                "theme": "Mathematics",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Ancient"  
+            },  
+            {  
+                "sentence": "The factorial of 5 (5!) is equal to ___.",  
+                "answer": "120",  
+                "theme": "Mathematics",  
+                "difficulty": "Medium",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            
+            # Technology  
+            {  
+                "sentence": "HTML stands for Hypertext Markup ___.",  
+                "answer": "Language",  
+                "theme": "Technology",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "The 'www' in a website URL stands for World Wide ___.",  
+                "answer": "Web",  
+                "theme": "Technology",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "The first commercially successful personal computer was the Apple ___.",  
+                "answer": "II",  
+                "theme": "Technology",  
+                "difficulty": "Medium",  
+                "cultural_origin": "American",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "Moore's Law states that the number of transistors on a microchip doubles about every two ___.",  
+                "answer": "years",  
+                "theme": "Technology",  
+                "difficulty": "Hard",  
+                "cultural_origin": "American",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "The programming language Python is named after the British comedy group Monty ___.",  
+                "answer": "Python",  
+                "theme": "Technology",  
+                "difficulty": "Medium",  
+                "cultural_origin": "Dutch",  
+                "time_period": "20th Century"  
+            },  
+            
+            # Music  
+            {  
+                "sentence": "Beethoven's Symphony No. 5 begins with the famous four-note ___.",  
+                "answer": "motif",  
+                "theme": "Music",  
+                "difficulty": "Medium",  
+                "cultural_origin": "German",  
+                "time_period": "19th Century"  
+            },  
+            {  
+                "sentence": "The Beatles were originally from ___.",  
+                "answer": "Liverpool",  
+                "theme": "Music",  
+                "difficulty": "Easy",  
+                "cultural_origin": "British",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "Mozart wrote his first symphony at the age of ___.",  
+                "answer": "8",  
+                "theme": "Music",  
+                "difficulty": "Hard",  
+                "cultural_origin": "Austrian",  
+                "time_period": "18th Century"  
+            },  
+            {  
+                "sentence": "The 'King of Pop' was the nickname given to Michael ___.",  
+                "answer": "Jackson",  
+                "theme": "Music",  
+                "difficulty": "Easy",  
+                "cultural_origin": "American",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "The woodwind instrument that looks like a long metal tube is called a ___.",  
+                "answer": "flute",  
+                "theme": "Music",  
+                "difficulty": "Medium",  
+                "cultural_origin": "International",  
+                "time_period": "Ancient"  
+            },  
+            
+            # Sports  
+            {  
+                "sentence": "In soccer, a game typically lasts ___ minutes.",  
+                "answer": "90",  
+                "theme": "Sports",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Modern"  
+            },  
+            {  
+                "sentence": "The Olympic Games are held every ___ years.",  
+                "answer": "4",  
+                "theme": "Sports",  
+                "difficulty": "Easy",  
+                "cultural_origin": "International",  
+                "time_period": "Ancient"  
+            },  
+            {  
+                "sentence": "In baseball, a ___ is when a batter hits the ball out of the playing field in fair territory.",  
+                "answer": "home run",  
+                "theme": "Sports",  
+                "difficulty": "Medium",  
+                "cultural_origin": "American",  
+                "time_period": "19th Century"  
+            },  
+            {  
+                "sentence": "The sport of ___ involves sliding down a snow-covered slope on a board attached to a rider's feet.",  
+                "answer": "snowboarding",  
+                "theme": "Sports",  
+                "difficulty": "Medium",  
+                "cultural_origin": "American",  
+                "time_period": "20th Century"  
+            },  
+            {  
+                "sentence": "In cricket, the term '___ out' refers to when a batsman is dismissed by the wicket-keeper removing the bails after the batsman steps out of the crease.",  
+                "answer": "stumped",  
+                "theme": "Sports",  
+                "difficulty": "Hard",  
+                "cultural_origin": "British",  
+                "time_period": "18th Century"  
+            }  
+        ]) 
+
+
         
         holdout_test_set = [  
             # Proverbs and common sayings  
@@ -520,10 +1025,10 @@ class FillTheBlankDataset(BaseDataset):
             {"sentence": "All that is gold does not ___.", "answer": "glitter"},  
         
             # More challenging examples  
-            {"sentence": "The proof of the ___ is in the eating.", "answer": "pudding"},  
-            {"sentence": "A ___ in sheep's clothing.", "answer": "wolf"},  
-            {"sentence": "Don't throw the baby out with the ___.", "answer": "bathwater"},  
-            {"sentence": "The road to ___ is paved with good intentions.", "answer": "hell"},  
+            
+            
+             
+            
             {"sentence": "Blood is thicker than ___.", "answer": "water"}  
         ]  
         if self.split == 'train':
@@ -615,7 +1120,7 @@ class FillTheBlankDataset(BaseDataset):
 class CompleteTheSentenceDataset(BaseDataset):  
     def load_data(self):  
         # Manually create the dataset  
-        data = [  
+        data = ([  
             # Proverbs and common sayings  
             {"sentence": "The quick brown fox jumps over the lazy ___.", "completion": "dog"},  
             {"sentence": "A stitch in time saves ___.", "completion": "nine"},  
@@ -668,7 +1173,97 @@ class CompleteTheSentenceDataset(BaseDataset):
             {"sentence": "The grass is always greener on the other side of the ___.", "completion": "fence"},  
             {"sentence": "A rolling stone gathers no ___.", "completion": "moss"},  
             {"sentence": "When the cat's away, the mice will ___.", "completion": "play"},  
-        ]  
+        ]  + [  
+            {"sentence": "A friend in need is a friend ___.", "completion": "indeed", "theme": "Proverbs", "difficulty": "Easy", "cultural_origin": "Global", "time_period": "Traditional"},  
+            {"sentence": "An apple a day keeps the doctor ___.", "completion": "away", "theme": "Proverbs", "difficulty": "Easy", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "Early to bed and early to rise makes a man healthy, wealthy, and ___.", "completion": "wise", "theme": "Proverbs", "difficulty": "Easy", "cultural_origin": "American", "time_period": "18th Century"},  
+            {"sentence": "Laughter is the best ___.", "completion": "medicine", "theme": "Proverbs", "difficulty": "Easy", "cultural_origin": "Global", "time_period": "Traditional"},  
+            {"sentence": "Where there's a will, there's a ___.", "completion": "way", "theme": "Proverbs", "difficulty": "Easy", "cultural_origin": "English", "time_period": "Traditional"}  
+        ]  + [  
+            {"sentence": "A bird in the hand is worth two in the ___.", "completion": "bush", "theme": "Proverbs", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "Don't put all your eggs in one ___.", "completion": "basket", "theme": "Proverbs", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "The early bird catches the ___.", "completion": "worm", "theme": "Proverbs", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "You can lead a horse to water, but you can't make it ___.", "completion": "drink", "theme": "Proverbs", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "A penny saved is a penny ___.", "completion": "earned", "theme": "Proverbs", "difficulty": "Medium", "cultural_origin": "American", "time_period": "18th Century"}  
+        ]  + [  
+            {"sentence": "The best-laid plans of mice and ___ often go awry.", "completion": "men", "theme": "Proverbs", "difficulty": "Hard", "cultural_origin": "Scottish", "time_period": "18th Century"},  
+            {"sentence": "A watched pot never ___.", "completion": "boils", "theme": "Proverbs", "difficulty": "Hard", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "The road to hell is paved with good ___.", "completion": "intentions", "theme": "Proverbs", "difficulty": "Hard", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "Discretion is the better part of ___.", "completion": "valor", "theme": "Proverbs", "difficulty": "Hard", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "There's many a slip 'twixt the cup and the ___.", "completion": "lip", "theme": "Proverbs", "difficulty": "Hard", "cultural_origin": "English", "time_period": "Traditional"}  
+        ]  + [  
+            {"sentence": "Knowledge is ___.", "completion": "power", "theme": "Philosophy", "difficulty": "Easy", "cultural_origin": "Global", "time_period": "Modern"},  
+            {"sentence": "The only way to do great work is to love what you ___.", "completion": "do", "theme": "Philosophy", "difficulty": "Easy", "cultural_origin": "American", "time_period": "Modern"},  
+            {"sentence": "Life is what happens when you're busy making other ___.", "completion": "plans", "theme": "Philosophy", "difficulty": "Easy", "cultural_origin": "English", "time_period": "20th Century"},  
+            {"sentence": "Be the change you wish to see in the ___.", "completion": "world", "theme": "Philosophy", "difficulty": "Easy", "cultural_origin": "Indian", "time_period": "20th Century"},  
+            {"sentence": "The future belongs to those who believe in the beauty of their ___.", "completion": "dreams", "theme": "Philosophy", "difficulty": "Easy", "cultural_origin": "American", "time_period": "20th Century"}  
+        ]  + [  
+            {"sentence": "The unexamined life is not worth ___.", "completion": "living", "theme": "Philosophy", "difficulty": "Medium", "cultural_origin": "Greek", "time_period": "Ancient"},  
+            {"sentence": "I think, therefore I ___.", "completion": "am", "theme": "Philosophy", "difficulty": "Medium", "cultural_origin": "French", "time_period": "17th Century"},  
+            {"sentence": "We are what we repeatedly ___.", "completion": "do", "theme": "Philosophy", "difficulty": "Medium", "cultural_origin": "Greek", "time_period": "Ancient"},  
+            {"sentence": "The only true wisdom is in knowing you know ___.", "completion": "nothing", "theme": "Philosophy", "difficulty": "Medium", "cultural_origin": "Greek", "time_period": "Ancient"},  
+            {"sentence": "Man is by nature a political ___.", "completion": "animal", "theme": "Philosophy", "difficulty": "Medium", "cultural_origin": "Greek", "time_period": "Ancient"}  
+        ]  + [  
+            {"sentence": "The moving finger writes, and having writ, moves ___.", "completion": "on", "theme": "Philosophy", "difficulty": "Hard", "cultural_origin": "Persian", "time_period": "11th Century"},  
+            {"sentence": "Cogito, ergo ___.", "completion": "sum", "theme": "Philosophy", "difficulty": "Hard", "cultural_origin": "Latin", "time_period": "17th Century"},  
+            {"sentence": "The owl of Minerva spreads its wings only with the falling of the ___.", "completion": "dusk", "theme": "Philosophy", "difficulty": "Hard", "cultural_origin": "German", "time_period": "19th Century"},  
+            {"sentence": "Man is condemned to be ___.", "completion": "free", "theme": "Philosophy", "difficulty": "Hard", "cultural_origin": "French", "time_period": "20th Century"},  
+            {"sentence": "That which does not kill us makes us ___.", "completion": "stronger", "theme": "Philosophy", "difficulty": "Hard", "cultural_origin": "German", "time_period": "19th Century"}  
+        ]  + [  
+            {"sentence": "To be, or not to be: that is the ___.", "completion": "question", "theme": "Literature", "difficulty": "Easy", "cultural_origin": "English", "time_period": "16th Century"},  
+            {"sentence": "It was the best of times, it was the worst of ___.", "completion": "times", "theme": "Literature", "difficulty": "Easy", "cultural_origin": "English", "time_period": "19th Century"},  
+            {"sentence": "Call me ___.", "completion": "Ishmael", "theme": "Literature", "difficulty": "Easy", "cultural_origin": "American", "time_period": "19th Century"},  
+            {"sentence": "In a hole in the ground there lived a ___.", "completion": "hobbit", "theme": "Literature", "difficulty": "Easy", "cultural_origin": "English", "time_period": "20th Century"},  
+            {"sentence": "The catcher in the ___.", "completion": "rye", "theme": "Literature", "difficulty": "Easy", "cultural_origin": "American", "time_period": "20th Century"}  
+        ]  + [  
+            {"sentence": "All animals are equal, but some animals are more equal than ___.", "completion": "others", "theme": "Literature", "difficulty": "Medium", "cultural_origin": "English", "time_period": "20th Century"},  
+            {"sentence": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a ___.", "completion": "wife", "theme": "Literature", "difficulty": "Medium", "cultural_origin": "English", "time_period": "19th Century"},  
+            {"sentence": "The man in black fled across the desert, and the gunslinger ___.", "completion": "followed", "theme": "Literature", "difficulty": "Medium", "cultural_origin": "American", "time_period": "20th Century"},  
+            {"sentence": "All the world's a stage, and all the men and women merely ___.", "completion": "players", "theme": "Literature", "difficulty": "Medium", "cultural_origin": "English", "time_period": "16th Century"},  
+            {"sentence": "It was a bright cold day in April, and the clocks were striking ___.", "completion": "thirteen", "theme": "Literature", "difficulty": "Medium", "cultural_origin": "English", "time_period": "20th Century"}  
+        ]  + [  
+            {"sentence": "Stately, plump Buck Mulligan came from the stairhead, bearing a bowl of lather on which a mirror and a razor lay ___.", "completion": "crossed", "theme": "Literature", "difficulty": "Hard", "cultural_origin": "Irish", "time_period": "20th Century"},  
+            {"sentence": "Many years later, as he faced the firing squad, Colonel Aureliano Buendía was to remember that distant afternoon when his father took him to discover ___.", "completion": "ice", "theme": "Literature", "difficulty": "Hard", "cultural_origin": "Colombian", "time_period": "20th Century"},  
+            {"sentence": "The sky above the port was the color of television, tuned to a dead ___.", "completion": "channel", "theme": "Literature", "difficulty": "Hard", "cultural_origin": "American", "time_period": "20th Century"},  
+            {"sentence": "If you really want to hear about it, the first thing you'll probably want to know is where I was born, and what my lousy childhood was like, and how my parents were occupied and all before they had me, and all that David Copperfield kind of ___.", "completion": "crap", "theme": "Literature", "difficulty": "Hard", "cultural_origin": "American", "time_period": "20th Century"},  
+            {"sentence": "He was an old man who fished alone in a skiff in the Gulf Stream and he had gone eighty-four days now without taking a ___.", "completion": "fish", "theme": "Literature", "difficulty": "Hard", "cultural_origin": "American", "time_period": "20th Century"}  
+        ]  + [  
+            {"sentence": "Every action has an equal and opposite ___.", "completion": "reaction", "theme": "Science", "difficulty": "Easy", "cultural_origin": "English", "time_period": "17th Century"},  
+            {"sentence": "Energy can neither be created nor destroyed, only ___.", "completion": "transformed", "theme": "Science", "difficulty": "Easy", "cultural_origin": "Global", "time_period": "19th Century"},  
+            {"sentence": "The square of the hypotenuse is equal to the sum of the squares of the other two ___.", "completion": "sides", "theme": "Mathematics", "difficulty": "Easy", "cultural_origin": "Greek", "time_period": "Ancient"},  
+            {"sentence": "Matter can neither be created nor ___.", "completion": "destroyed", "theme": "Science", "difficulty": "Easy", "cultural_origin": "Global", "time_period": "18th Century"},  
+            {"sentence": "What goes up must come ___.", "completion": "down", "theme": "Science", "difficulty": "Easy", "cultural_origin": "English", "time_period": "17th Century"}  
+        ]  + [  
+            {"sentence": "In nature, nothing is created, nothing is lost, everything ___.", "completion": "changes", "theme": "Science", "difficulty": "Medium", "cultural_origin": "Greek", "time_period": "Ancient"},  
+            {"sentence": "The whole is greater than the sum of its ___.", "completion": "parts", "theme": "Science", "difficulty": "Medium", "cultural_origin": "Greek", "time_period": "Ancient"},  
+            {"sentence": "Nature abhors a ___.", "completion": "vacuum", "theme": "Science", "difficulty": "Medium", "cultural_origin": "Greek", "time_period": "Ancient"},  
+            {"sentence": "Survival of the ___.", "completion": "fittest", "theme": "Science", "difficulty": "Medium", "cultural_origin": "English", "time_period": "19th Century"},  
+            {"sentence": "For every complex problem there is an answer that is clear, simple, and ___.", "completion": "wrong", "theme": "Science", "difficulty": "Medium", "cultural_origin": "American", "time_period": "20th Century"}  
+        ]  + [  
+            {"sentence": "The entropy of an isolated system always ___.", "completion": "increases", "theme": "Science", "difficulty": "Hard", "cultural_origin": "German", "time_period": "19th Century"},  
+            {"sentence": "In quantum mechanics, the position and momentum of a particle cannot be simultaneously measured with arbitrary ___.", "completion": "precision", "theme": "Science", "difficulty": "Hard", "cultural_origin": "German", "time_period": "20th Century"},  
+            {"sentence": "The curvature of spacetime is directly proportional to the energy and momentum of whatever matter and radiation are ___.", "completion": "present", "theme": "Science", "difficulty": "Hard", "cultural_origin": "German", "time_period": "20th Century"},  
+            {"sentence": "In the limit, as the sample size approaches infinity, the sampling distribution of the mean approaches a normal ___.", "completion": "distribution", "theme": "Mathematics", "difficulty": "Hard", "cultural_origin": "Global", "time_period": "20th Century"},  
+            {"sentence": "The integral of the product of two functions is equal to the integral of the product of one function and the derivative of the other, minus the integral of the product of the derivative of the first function and the ___.", "completion": "second", "theme": "Mathematics", "difficulty": "Hard", "cultural_origin": "Global", "time_period": "18th Century"}  
+        ]  + [  
+            {"sentence": "Break a ___.", "completion": "leg", "theme": "Idioms", "difficulty": "Easy", "cultural_origin": "English", "time_period": "Modern"},  
+            {"sentence": "It's raining cats and ___.", "completion": "dogs", "theme": "Idioms", "difficulty": "Easy", "cultural_origin": "English", "time_period": "Modern"},  
+            {"sentence": "The ball is in your ___.", "completion": "court", "theme": "Idioms", "difficulty": "Easy", "cultural_origin": "English", "time_period": "Modern"},  
+            {"sentence": "Bite off more than you can ___.", "completion": "chew", "theme": "Idioms", "difficulty": "Easy", "cultural_origin": "English", "time_period": "Modern"},  
+            {"sentence": "Speak of the ___.", "completion": "devil", "theme": "Idioms", "difficulty": "Easy", "cultural_origin": "English", "time_period": "Modern"}  
+        ]  + [  
+            {"sentence": "The elephant in the ___.", "completion": "room", "theme": "Idioms", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Modern"},  
+            {"sentence": "Barking up the wrong ___.", "completion": "tree", "theme": "Idioms", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Modern"},  
+            {"sentence": "Cut to the ___.", "completion": "chase", "theme": "Idioms", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Modern"},  
+            {"sentence": "Hit the nail on the ___.", "completion": "head", "theme": "Idioms", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Modern"},  
+            {"sentence": "Spill the ___.", "completion": "beans", "theme": "Idioms", "difficulty": "Medium", "cultural_origin": "English", "time_period": "Modern"}  
+        ]  + [  
+            {"sentence": "The pot calling the kettle ___.", "completion": "black", "theme": "Idioms", "difficulty": "Hard", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "A diamond in the ___.", "completion": "rough", "theme": "Idioms", "difficulty": "Hard", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "Caught between Scylla and ___.", "completion": "Charybdis", "theme": "Idioms", "difficulty": "Hard", "cultural_origin": "Greek", "time_period": "Ancient"},  
+            {"sentence": "Burning the candle at both ___.", "completion": "ends", "theme": "Idioms", "difficulty": "Hard", "cultural_origin": "English", "time_period": "Traditional"},  
+            {"sentence": "The writing is on the ___.", "completion": "wall", "theme": "Idioms", "difficulty": "Hard", "cultural_origin": "English", "time_period": "Traditional"}  
+        ])
         
         holdout_test_set = [  
             # Proverbs and common sayings (Easy)  
@@ -748,6 +1343,21 @@ class CompleteTheSentenceDataset(BaseDataset):
             {"sentence": "Discretion is the better part of ___.", "completion": "valor", "difficulty": "hard"},  
             {"sentence": "The writing is on the ___.", "completion": "wall", "difficulty": "hard"}  
         ]  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         if self.split == 'train':
             return data[:self.subset_size] if self.subset_size else data

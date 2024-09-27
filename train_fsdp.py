@@ -77,7 +77,7 @@ config = {
     "stop_tokens": [], # [".", "!", "?"],  
     "small_model_dim": 2048,  
     "large_model_dim": 3072,  
-    "learning_rate": 1e-4,  
+    "learning_rate": 1e-5,  
     "batch_size": 16,  
     "num_epochs": 50,  
     "warmup_steps": 10,  
@@ -90,7 +90,7 @@ config = {
     "max_input_length": 64,  
     "max_output_length": 16,
     "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
-    "dataset_name": "fill_the_blank",  # Specify the dataset to use  
+    "dataset_name": "complete_the_sentence",  # Specify the dataset to use  # complete_the_sentence # fill_the_blank
     "seed": 42,  
 }  
   
@@ -161,7 +161,7 @@ def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):
     return total_loss / len(train_loader)  
   
 # Evaluation function  
-def evaluate(model, data_loader, tokenizer, dataset, config, print_generations=False):  
+def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):  
     model.eval()  
     total_loss = 0  
     progress_bar = tqdm(data_loader, desc="Evaluating", disable=not dist.get_rank() == 0)  
@@ -180,7 +180,7 @@ def evaluate(model, data_loader, tokenizer, dataset, config, print_generations=F
   
             # Generate text  
             # print(batch['input_ids'].shape)
-            generated = model.generate(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'], max_length=config["max_output_length"])  
+            generated = model.generate(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'], max_length=config["max_output_length"], mode=mode)  
   
             # Convert generated tensors to text  
             if isinstance(generated, torch.Tensor):  
@@ -263,20 +263,23 @@ def main():
         writer = SummaryWriter(log_dir=f'runs/{config["dataset_name"]}_training')  
   
     best_metric = 0  
-    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config)  
-    print(f"Test Loss: {test_loss:.4f}")  
-    print(f"Test Metrics: {test_metrics}")  
+    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="baseline")  
+    train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="baseline")  
+    print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}, Baseline Train Loss: {train_loss_eval:.4f}, Baseline Train Metrics: {train_metrics}")
+    
+    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="large-baseline")  
+    train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="large-baseline")  
+    print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}, Large Baseline Train Loss: {train_loss_eval:.4f}, Large Baseline Train Metrics: {train_metrics}")
+    
     for epoch in range(config["num_epochs"]):  
         train_loss = train_epoch(model, epoch, train_loader, optimizer, scheduler, config)  
-        test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config)  
-        # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config)  
+        test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="test")  
+        train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="train")  
         torch.distributed.barrier()  
   
         if dist.get_rank() == 0:  
             logger.info(f"Epoch {epoch+1}/{config['num_epochs']}:")  
-            logger.info(f"Train Loss: {train_loss:.4f}")  
-            logger.info(f"Test Loss: {test_loss:.4f}")  
-            logger.info(f"Test Metrics: {test_metrics}")  
+            logger.info(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}, Train Metrics: {train_metrics}")
   
             writer.add_scalar('Loss/train', train_loss, epoch)  
             writer.add_scalar('Loss/test', test_loss, epoch)  
@@ -284,7 +287,7 @@ def main():
                 writer.add_scalar(f'{metric_name}/test', value, epoch)  
   
             
-            # logger.info(f"Train Metrics: {train_metrics}")  
+            
         torch.distributed.barrier()  
         logger.info(f"Process {dist.get_rank()} finished epoch {epoch+1}")  
         if dist.get_rank() == 0:  
