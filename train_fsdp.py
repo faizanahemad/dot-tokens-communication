@@ -79,18 +79,18 @@ config = {
     "large_model_dim": 3072,  
     "learning_rate": 1e-3,  
     "batch_size": 8,  
-    "num_epochs": 100,  
+    "num_epochs": 2,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
-    "train_subset_size": 32,  # Set to None to use full dataset  
-    "test_subset_size": 32,    # Set to None to use full dataset  
+    "train_subset_size": 8,  # Set to None to use full dataset  
+    "test_subset_size": 8,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
     "gradient_accumulation_steps": 1,  
     "num_workers": 4,  
-    "max_input_length": 256,  
-    "max_output_length": 8,
+    "max_input_length": 64,  
+    "max_output_length": 16,
     "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
-    "dataset_name": "complete_the_sentence",  # Specify the dataset to use  
+    "dataset_name": "fill_the_blank",  # Specify the dataset to use  
     "seed": 42,  
 }  
   
@@ -179,6 +179,7 @@ def evaluate(model, data_loader, tokenizer, dataset, config, print_generations=F
             total_loss += loss.item()  
   
             # Generate text  
+            # print(batch['input_ids'].shape)
             generated = model.generate(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'], max_length=config["max_output_length"])  
   
             # Convert generated tensors to text  
@@ -202,7 +203,8 @@ def evaluate(model, data_loader, tokenizer, dataset, config, print_generations=F
             # Evaluate metrics  
             for name, func in metric_functions.items():  
                 results = func(predicted_answers, actual_answers)  
-                metric_accumulators[name] += results.get(name, 0.0) * len(predicted_answers)  
+                # print(f"Metric: {name}, Results: {results}, Sample predictions: {predicted_answers[:2]}, Sample actuals: {actual_answers[:2]}")
+                metric_accumulators[name] += results[name] * len(predicted_answers)  
   
             total_samples += len(predicted_answers)  
   
@@ -261,10 +263,13 @@ def main():
         writer = SummaryWriter(log_dir=f'runs/{config["dataset_name"]}_training')  
   
     best_metric = 0  
+    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config)  
+    print(f"Test Loss: {test_loss:.4f}")  
+    print(f"Test Metrics: {test_metrics}")  
     for epoch in range(config["num_epochs"]):  
         train_loss = train_epoch(model, epoch, train_loader, optimizer, scheduler, config)  
         test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config)  
-        train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config)  
+        # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config)  
         torch.distributed.barrier()  
   
         if dist.get_rank() == 0:  
@@ -279,13 +284,13 @@ def main():
                 writer.add_scalar(f'{metric_name}/test', value, epoch)  
   
             
-            logger.info(f"Train Metrics: {train_metrics}")  
+            # logger.info(f"Train Metrics: {train_metrics}")  
         torch.distributed.barrier()  
         logger.info(f"Process {dist.get_rank()} finished epoch {epoch+1}")  
         if dist.get_rank() == 0:  
             logger.info(f"Writing to tensorboard")
-            for metric_name, value in train_metrics.items():  
-                writer.add_scalar(f'{metric_name}/train', value, epoch)  
+            # for metric_name, value in train_metrics.items():  
+                # writer.add_scalar(f'{metric_name}/train', value, epoch)  
                 
             logger.info(f"Done Writing to tensorboard")
   

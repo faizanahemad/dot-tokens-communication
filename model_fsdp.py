@@ -102,10 +102,13 @@ class DualModelTransformer(nn.Module):
         # Initialize tokenizers  
         self.large_tokenizer = AutoTokenizer.from_pretrained(large_model_name, trust_remote_code=True)  
         self.small_tokenizer = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)  
+        self.small_tokenizer.padding_side = 'left'  
+        self.large_tokenizer.padding_side = 'left'
+        if self.small_tokenizer.pad_token is None:  
+            self.small_tokenizer.pad_token = self.small_tokenizer.eos_token  
+        if self.large_tokenizer.pad_token is None:  
+            self.large_tokenizer.pad_token = self.large_tokenizer.eos_token  
 
-        # add tokenizer.pad_token = tokenizer.eos_token
-        self.small_tokenizer.pad_token = self.small_tokenizer.eos_token
-        self.large_tokenizer.pad_token = self.large_tokenizer.eos_token
   
         self.stop_tokens = stop_tokens  
         self.small_model_dim = small_model_dim  
@@ -122,7 +125,9 @@ class DualModelTransformer(nn.Module):
             torch.nn.init.zeros_(module.bias)
   
     def _get_embedding_layer(self, model):  
-        if hasattr(model, 'get_input_embeddings'):  
+        if hasattr(model, 'model') and hasattr(model.model, 'embed_tokens'):  
+            return model.model.embed_tokens  
+        elif hasattr(model, 'get_input_embeddings'):  
             return model.get_input_embeddings()  
         elif hasattr(model, 'transformer') and hasattr(model.transformer, 'wte'):  
             return model.transformer.wte  
@@ -404,11 +409,13 @@ class DualModelTransformer(nn.Module):
         Returns:  
             str: Newly generated text as a string.  
         """  
+        self.small_model.eval() 
         with torch.no_grad():  
             embedding_layer = self.embedding_layer  
             generated_ids = input_ids.clone()  
             newly_generated_ids = None  
             past_key_values = None  # Initialize past_key_values as None  
+            position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0)  
     
         for idx in range(max_length):  
             with torch.no_grad():  
@@ -419,12 +426,19 @@ class DualModelTransformer(nn.Module):
                 else:  
                     # Subsequent iterations: Use last generated token's embedding  
                     input_embeds = embedding_layer(generated_ids[:, -1:])  
-                    current_attention_mask = torch.ones((generated_ids.size(0), 1), device=generated_ids.device)  
+                    position_ids = torch.cat([position_ids, position_ids[:, -1:] + 1], dim=1)  
+                    # Update attention mask  
+                    current_attention_mask = torch.cat(  
+                        [current_attention_mask, torch.ones((current_attention_mask.size(0), 1), device=current_attention_mask.device)],  
+                        dim=1  
+                    )  
+
     
                 # Generate next token  
                 # print(f"idx: {idx}, input_embeds shape: {input_embeds.shape}, current_attention_mask shape: {current_attention_mask.shape}")  
                 model_output = self.small_model(  
                     inputs_embeds=input_embeds,  
+                    position_ids=position_ids[:, -input_embeds.size(1):],  
                     attention_mask=current_attention_mask,  
                     past_key_values=past_key_values,  
                     use_cache=True  
@@ -453,7 +467,7 @@ class DualModelTransformer(nn.Module):
             # Decode current output  
             newly_generated_text = self.small_tokenizer.decode(newly_generated_ids[0], skip_special_tokens=True)  
             # Print debugging information  
-            print(f"Newly generated text: '{newly_generated_text}', newly_generated_ids: {newly_generated_ids[0]}, Next token: {next_token.item()}, EOS token: {self.small_tokenizer.eos_token_id}")  
+            # print(f"Newly generated text: '{newly_generated_text}', newly_generated_ids: {newly_generated_ids[0]}, Next token: {next_token.item()}, EOS token: {self.small_tokenizer.eos_token_id}")  
     
             # Check for EOS token or stop tokens  
             if (  
@@ -465,6 +479,109 @@ class DualModelTransformer(nn.Module):
         final_output = self.small_tokenizer.decode(newly_generated_ids[0], skip_special_tokens=True)  
         return final_output  
 
+    def simple_generate_new_v2(  self,
+        input_ids: torch.Tensor,  
+        attention_mask: torch.Tensor,  
+        max_length,
+        temperature: float = 1.0,  
+        sampling_method: str = "greedy"  
+    ) -> str:  
+        """  
+        Generates text using the embedding layer and ensures positional embeddings are correctly handled.  
+        Outputs only the newly generated text.  
+    
+        Args:  
+            input_ids (torch.Tensor): Tensor of input token IDs.  
+            attention_mask (torch.Tensor): Attention mask for the input.  
+            max_length (int): Maximum number of tokens to generate.  
+            temperature (float): Sampling temperature for controlling randomness.  
+            sampling_method (str): Method of sampling ('greedy' or 'sample').  
+    
+        Returns:  
+            str: Newly generated text as a string.  
+        """  
+        tokenizer = self.small_tokenizer
+        model = self.small_model
+        embedding_layer = self.embedding_layer
+        model.eval()  
+        device = input_ids.device  
+    
+        with torch.no_grad():  
+            generated_ids = input_ids.clone()  
+            newly_generated_ids = None  
+            past_key_values = None  # Initialize past_key_values as None  
+    
+            # Initialize position_ids  
+            position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long, device=device).unsqueeze(0).repeat(input_ids.size(0), 1)  
+            current_attention_mask = attention_mask.clone()  
+    
+            for idx in range(max_length):  
+                if idx == 0:  
+                    # First iteration: Use the full input embeddings  
+                    input_embeds = embedding_layer(input_ids) 
+                    # print(input_embeds[:, -4, -4:]) 
+                else:  
+                    # Subsequent iterations: Use last generated token's embedding  
+                    last_token_id = generated_ids[:, -1:]  
+                    input_embeds = embedding_layer(last_token_id)  
+                    # Update position_ids  
+                    position_ids = torch.cat([position_ids, position_ids[:, -1:] + 1], dim=1)  
+                    # Update attention mask  
+                    current_attention_mask = torch.cat(  
+                        [current_attention_mask, torch.ones((current_attention_mask.size(0), 1), device=device)],  
+                        dim=1  
+                    )  
+                # if idx == 2:
+                #     print(input_embeds[..., -4:]) 
+    
+                # Generate next token  
+                model_output = model(  
+                    inputs_embeds=input_embeds,  
+                    attention_mask=current_attention_mask,  
+                    position_ids=position_ids[:, -input_embeds.size(1):],  
+                    past_key_values=past_key_values,  
+                    use_cache=True  
+                )  
+    
+                logits = model_output.logits[:, -1, :]  
+                past_key_values = model_output.past_key_values  
+    
+                # Sampling  
+                if sampling_method == "greedy":  
+                    next_token = torch.argmax(logits, dim=-1)  
+                    if idx == 1:
+                        pass
+                        # print(logits[4:6, -128:-96])
+                        # print(next_token)
+                elif sampling_method == "sample":  
+                    probs = torch.nn.functional.softmax(logits / temperature, dim=-1)  
+                    next_token = torch.multinomial(probs, num_samples=1).squeeze(1)  
+                else:  
+                    raise ValueError("Invalid sampling method. Choose 'greedy' or 'sample'.")  
+    
+                # Append generated token  
+                generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
+                if newly_generated_ids is None:  
+                    newly_generated_ids = next_token.unsqueeze(1)  
+                    # print(next_token.shape, newly_generated_ids.shape)
+                else:  
+                    newly_generated_ids = torch.cat([newly_generated_ids, next_token.unsqueeze(1)], dim=-1) 
+                    # print(next_token.shape, newly_generated_ids.shape)
+    
+                # Decode current output  
+                # newly_generated_text = tokenizer.decode(newly_generated_ids[0], skip_special_tokens=True)  
+                # Debugging information (optional)  
+                # print(f"idx: {idx}, Newly generated text: '{newly_generated_text}', Next token ID: {next_token.item()}, EOS token ID: {self.small_tokenizer.eos_token_id}")  
+    
+                # Check for EOS token  
+                # if next_token.item() == tokenizer.eos_token_id:  
+                #     break  
+    
+        # Decode final output  
+        # final_output = tokenizer.decode(newly_generated_ids[0], skip_special_tokens=True)  
+        final_output = newly_generated_ids
+        return final_output  
+    
     
     def generate_text(  
         self,  
@@ -536,7 +653,10 @@ class DualModelTransformer(nn.Module):
                 else:  
                     # Subsequent iterations: Use last generated token's embedding  
                     combined_input = embedding_layer(generated_ids[:, -1:])  
-                    current_attention_mask = torch.ones((generated_ids.size(0), 1), device=generated_ids.device)  
+                    current_attention_mask = torch.cat(  
+                        [current_attention_mask, torch.ones((current_attention_mask.size(0), 1), device=current_attention_mask.device)],  
+                        dim=1  
+                    )
                 # Generate next token  
                 # print(f"idx: {idx}, Combined input shape: {combined_input.shape}, current_attention_mask shape: {current_attention_mask.shape}")
                 model_output = self.small_model(  
@@ -578,7 +698,7 @@ class DualModelTransformer(nn.Module):
             current_output = self.small_tokenizer.decode(generated_ids[0], skip_special_tokens=True)  
             newly_generated_text = self.small_tokenizer.decode(newly_generated_ids[0], skip_special_tokens=True)
             # print(f"Newly generated text: {newly_generated_text}, Current output: {current_output}, generated_ids: {generated_ids}, Next token: {next_token.item()}, EOS token: {self.small_tokenizer.eos_token_id}")
-            print(f"Newly generated text: '{newly_generated_text}', newly_generated_ids: {newly_generated_ids[0]}, Next token: {next_token.item()}, EOS token: {self.small_tokenizer.eos_token_id}")
+            # print(f"Newly generated text: '{newly_generated_text}', newly_generated_ids: {newly_generated_ids[0]}, Next token: {next_token.item()}, EOS token: {self.small_tokenizer.eos_token_id}")
     
             # Check for EOS token or stop tokens  
             if (  
@@ -603,6 +723,11 @@ class DualModelTransformer(nn.Module):
         temperature: float = 1.0,  
         sampling_method: str = "greedy"  
     ) -> Union[str, List[str]]:  
+        self.small_model.eval()
+        self.large_model.eval()
+        self.ffn_small_to_large.eval()
+        self.ffn_large_to_small.eval()
+        print(input_ids.shape)
         if max_length is None:  
             max_length = self.max_length  
   
@@ -620,18 +745,39 @@ class DualModelTransformer(nn.Module):
         input_text = self.small_tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         batch_size = input_ids.shape[0]  
         generated_texts = []  
+        # print(input_ids[:, -32:])
+        # print(input_ids.shape)
+        generated = self.simple_generate_new_v2(  
+                input_ids=input_ids,  
+                attention_mask=attention_mask,  
+                max_length=max_length,
+                temperature=temperature,  
+                sampling_method=sampling_method  
+            )  
+        # print(batch_size)
+        # print(generated.shape)
+        generated_texts = self.small_tokenizer.batch_decode(generated, skip_special_tokens=True)  
+        
+        assert len(generated_texts) == batch_size
+        for ix in range(batch_size):
+            generated_texts[ix] = generated_texts[ix].replace(input_text[ix], "").replace(self.small_tokenizer.eos_token, "").replace(self.small_tokenizer.pad_token, "").strip()
+            # print(generated_texts[ix])
   
-        for i in range(batch_size):  
-            generated_text = self.simple_generate_text(  
-                input_ids[i].unsqueeze(0),  
-                attention_mask[i].unsqueeze(0) if attention_mask is not None else None,  
-                max_length,  
-                temperature,  
-                sampling_method  
-            )
-            generated_text = generated_text.replace(input_text[i], "").replace(self.small_tokenizer.eos_token, "").replace(self.small_tokenizer.pad_token, "").strip()
-            generated_texts.append(generated_text)  
-            print(f"Input: {input_text[i]}\tGenerated: {generated_text}\n")
+        # for i in range(batch_size):  
+        #     generated_text = self.simple_generate_new_v2(  
+        #         input_ids[i].unsqueeze(0),  
+        #         attention_mask[i].unsqueeze(0) if attention_mask is not None else None,  
+        #         max_length,  
+        #         temperature,  
+        #         sampling_method  
+        #     )
+        #     # if generated text is tensor, then decode it
+        #     if isinstance(generated_text, torch.Tensor):
+        #         generated_text = self.small_tokenizer.batch_decode(generated_text, skip_special_tokens=True)  
+        #         generated_text = generated_text[0]
+        #     generated_text = generated_text.replace(input_text[i], "").replace(self.small_tokenizer.eos_token, "").replace(self.small_tokenizer.pad_token, "").strip()
+        #     generated_texts.append(generated_text)  
+        #     # print(f"Input: {input_text[i]}\tGenerated: {generated_text}\n")
   
         return generated_texts[0] if len(generated_texts) == 1 else generated_texts  
   

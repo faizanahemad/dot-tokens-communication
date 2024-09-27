@@ -484,7 +484,7 @@ class FillTheBlankDataset(BaseDataset):
             {"sentence": "Don't throw the baby out with the ___.", "answer": "bathwater"},  
             {"sentence": "A bird in the hand is worth two in the ___.", "answer": "bush"},  
         ]  
-        return data  
+        return data[:self.subset_size] 
   
     def preprocess_data(self):  
         self.cached_data = []  
@@ -546,17 +546,23 @@ class FillTheBlankDataset(BaseDataset):
                     correct += 1  
                 total += 1  
             accuracy = correct / total if total > 0 else 0  
-            return {'accuracy': accuracy}  
+            return {'exact_match': accuracy}  
         # reference is contained in the output
         def reference_contained(predictions, references):
             correct = 0
             total = 0
             for pred, ref in zip(predictions, references):
+                pred = pred.strip().lower().replace("\n", " ")
+                ref = ref.strip().lower().replace("\n", "")
                 # lower case both pred and ref
+                
                 if pred is not None and ref is not None and ref.lower() in pred.lower():
                     correct += 1
                 total += 1
+                # print(pred, ref, " | ", ref.lower() in pred.lower(), " | ", correct, total)
             accuracy = correct / total if total > 0 else 0
+            # print(f"Accuracy: {accuracy:.2f} ({correct}/{total} correct)")
+            return {'reference_contained': accuracy}
         return {'exact_match': exact_match, 'reference_contained': reference_contained}  
   
 class CompleteTheSentenceDataset(BaseDataset):  
@@ -616,7 +622,7 @@ class CompleteTheSentenceDataset(BaseDataset):
             {"sentence": "A rolling stone gathers no ___.", "completion": "moss"},  
             {"sentence": "When the cat's away, the mice will ___.", "completion": "play"},  
         ]  
-        return data  
+        return data[:self.subset_size]
   
     def preprocess_data(self):  
         self.cached_data = []  
@@ -678,7 +684,7 @@ class CompleteTheSentenceDataset(BaseDataset):
                     correct += 1  
                 total += 1  
             accuracy = correct / total if total > 0 else 0  
-            return {'accuracy': accuracy}  
+            return {'exact_match': accuracy}  
         # reference is contained in the output
         def reference_contained(predictions, references):
             correct = 0
@@ -689,7 +695,7 @@ class CompleteTheSentenceDataset(BaseDataset):
                     correct += 1
                 total += 1
             accuracy = correct / total if total > 0 else 0
-            return {'accuracy': accuracy}
+            return {'reference_contained': accuracy}
         return {'exact_match': exact_match, 'reference_contained': reference_contained}  
 
 def get_validation_split(dataset_name):
