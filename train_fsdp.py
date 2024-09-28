@@ -1,5 +1,6 @@
 import os
 
+from model_strong_baselines import OneModelTransformer
 from my_datasets import get_validation_split  
 os.environ["TOKENIZERS_PARALLELISM"] = "true"  
 os.environ["OMP_NUM_THREADS"] = "2"
@@ -46,29 +47,29 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')  
 logger = logging.getLogger(__name__)  
   
-# Configuration  
-config = {  
-    "large_model_name": "EleutherAI/pythia-1b-deduped",  
-    "small_model_name": "EleutherAI/pythia-410m",  
-    "stop_tokens": [], # [".", "!", "?"],  
-    "small_model_dim": 1024,  
-    "large_model_dim": 2048,  
-    "learning_rate": 1e-3,  
-    "batch_size": 8,  
-    "num_epochs": 100,  
-    "warmup_steps": 10,  
-    "max_grad_norm": 1.0,  
-    "train_subset_size": 32,  # Set to None to use full dataset  
-    "test_subset_size": 32,    # Set to None to use full dataset  
-    "weight_decay": 0.001,  
-    "gradient_accumulation_steps": 1,  
-    "num_workers": 4,  
-    "max_input_length": 256,  
-    "max_output_length": 8,
-    "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
-    "dataset_name": "complete_the_sentence",  # Specify the dataset to use  
-    "seed": 42,  
-}  
+# # Configuration  
+# config = {  
+#     "large_model_name": "EleutherAI/pythia-1b-deduped",  
+#     "small_model_name": "EleutherAI/pythia-410m",  
+#     "stop_tokens": [], # [".", "!", "?"],  
+#     "small_model_dim": 1024,  
+#     "large_model_dim": 2048,  
+#     "learning_rate": 1e-3,  
+#     "batch_size": 8,  
+#     "num_epochs": 100,  
+#     "warmup_steps": 10,  
+#     "max_grad_norm": 1.0,  
+#     "train_subset_size": 32,  # Set to None to use full dataset  
+#     "test_subset_size": 32,    # Set to None to use full dataset  
+#     "weight_decay": 0.001,  
+#     "gradient_accumulation_steps": 1,  
+#     "num_workers": 4,  
+#     "max_input_length": 256,  
+#     "max_output_length": 8,
+#     "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
+#     "dataset_name": "complete_the_sentence",  # Specify the dataset to use  
+#     "seed": 42,  
+# }  
 
 
 config = {  
@@ -77,9 +78,9 @@ config = {
     "stop_tokens": [], # [".", "!", "?"],  
     "small_model_dim": 2048,  
     "large_model_dim": 3072,  
-    "learning_rate": 1e-5,  
+    "learning_rate": 5e-5,  
     "batch_size": 16,  
-    "num_epochs": 5,  
+    "num_epochs": 10,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
     "train_subset_size": None,  # Set to None to use full dataset  
@@ -92,6 +93,8 @@ config = {
     "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
     "dataset_name": "gsm8k",  # Specify the dataset to use  # complete_the_sentence # fill_the_blank
     "seed": 42,  
+    "model_cls": DualModelTransformer,
+    
 }  
   
 set_seed(config["seed"])  
@@ -198,7 +201,7 @@ def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):
   
             # Extract answers from generated and label texts  
             predicted_answers = [dataset.extract_answer(text) for text in generated_texts]  
-            actual_answers = [ref.lower() for ref in batch.get('reference_answer', label_texts)]  
+            actual_answers = [dataset.extract_answer(ref.lower()) for ref in batch.get('reference_answer', label_texts)]  
   
             # Evaluate metrics  
             for name, func in metric_functions.items():  
@@ -229,13 +232,14 @@ def main():
     fsdp_config = setup_fsdp()  
   
     train_loader, test_loader, tokenizer, train_dataset, test_dataset = process_data(config)  
-    model = create_model(config, fsdp_config)  
+    model = create_model(config, model_cls=config["model_cls"], fsdp_config=fsdp_config)  
+    local_rank = os.environ['LOCAL_RANK']
     
     # load model from checkpoint
     # Load model from checkpoint
-    if dist.get_rank() == 0:
-        checkpoint = torch.load('final_dual_model_gsm8k.pth', map_location='cpu')
-        model.load_state_dict(checkpoint)
+    # if dist.get_rank() == 0:
+    #     checkpoint = torch.load('final_dual_model_gsm8k.pth', map_location='cpu')
+    #     model.load_state_dict(checkpoint)
     torch.distributed.barrier()  
     
   
@@ -314,13 +318,13 @@ def main():
         if test_metrics[primary_metric] > best_metric and epoch > 0:  
             best_metric = test_metrics[primary_metric]  
             logger.info(f"Saving best model for rank: {dist.get_rank()}")
-            save_model(model, f"best_dual_model_{config['dataset_name']}.pth")  
+            save_model(model, f"best_dual_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")  
         torch.distributed.barrier()  
         logger.info(f"Proceeding to save final model on rank: {dist.get_rank()}")
         
         if epoch == config["num_epochs"] - 1:  
             logger.info(f"Saving final model")
-            save_model(model, f"final_dual_model_{config['dataset_name']}.pth")  
+            save_model(model, f"final_dual_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")  
         torch.distributed.barrier()  
         logger.info(f"Done saving final model")
   

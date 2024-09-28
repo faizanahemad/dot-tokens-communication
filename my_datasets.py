@@ -5,9 +5,10 @@ from torch.utils.data import Dataset
 from datasets import load_dataset  
 from transformers import AutoTokenizer  
 from tqdm import tqdm  
+import re  
   
 class BaseDataset(Dataset):  
-    def __init__(self, dataset_name, tokenizer_name, max_input_length, max_output_length, split, subset_size=None):  
+    def __init__(self, dataset_name, tokenizer_name, max_input_length, max_output_length, split, subset_size=None, **extra_kwargs):  
         self.dataset_name = dataset_name  
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)  
         # Check if the tokenizer has no pad token
@@ -19,6 +20,7 @@ class BaseDataset(Dataset):
         self.subset_size = subset_size  
         self.data = self.load_data()  
         self.cached_data = self.preprocess_data()  
+        self.extra_kwargs = extra_kwargs
   
     def load_data(self):  
         raise NotImplementedError("This method should be implemented by subclasses.")  
@@ -141,6 +143,155 @@ class GSM8KDataset(BaseDataset):
             return {'reference_contained': accuracy}
         return {'exact_match': exact_match, 'reference_contained': reference_contained} 
   
+# datasets.py (continued)  
+  
+
+  
+class MMLUDataset(BaseDataset):  
+    def __init__(  
+        self,  
+        dataset_name,  
+        tokenizer_name,  
+        max_input_length,  
+        max_output_length,  
+        split,  
+        subset_size=None,  
+        **extra_kwargs
+    ):  
+        self.include_thinking = extra_kwargs.get("include_thinking", False)
+        super().__init__(  
+            dataset_name,  
+            tokenizer_name,  
+            max_input_length,  
+            max_output_length,  
+            split,  
+            subset_size  
+        )  
+  
+    def load_data(self):  
+        dataset = load_dataset("lighteval/mmlu", "all")  
+        data = dataset[self.split]  
+        if self.subset_size:  
+            data = data.select(range(self.subset_size))  
+        return data  
+  
+    def construct_prompt(self, question, options, subject):  
+        # Base prompt  
+        prompt = f"Please answer the following question by selecting the correct option. Subject: {subject}\nQuestion: {question}\nOptions:\n"  
+        for idx, option in enumerate(options):  
+            option_label = chr(65 + idx)  # Convert 0->A, 1->B, etc.  
+            prompt += f"{option_label}. {option}\n"  
+  
+        if self.include_thinking:  
+            prompt += "\nProvide your thought process inside <thinking> and </thinking> tags."  
+  
+        # Clarify the instruction for the final answer  
+        prompt += "\nProvide your final answer inside  <answer> and </answer>  tags."  
+  
+        return prompt  
+  
+    def preprocess_data(self):  
+        self.cached_data = []  
+        for item in tqdm(self.data, desc=f"Preprocessing MMLU {self.split} data"):  
+            question = item['question']  
+            options = item['options']  
+            correct_answer = item['answer']  
+            subject = item.get('subject', 'General Knowledge')  # Default subject if not provided  
+  
+            # Construct the prompt  
+            prompt = self.construct_prompt(question, options, subject)  
+  
+            # Tokenize the prompt with left padding  
+            self.tokenizer.padding_side = 'left'  
+            encoded_prompt = self.tokenizer(  
+                prompt,  
+                max_length=self.max_input_length,  
+                padding='max_length',  
+                truncation=True,  
+                return_tensors='pt',  
+                add_special_tokens=True  
+            )  
+            input_ids = encoded_prompt['input_ids'].squeeze()  
+            attention_mask = encoded_prompt['attention_mask'].squeeze()  
+  
+            # Prepare the target answer with  tags  
+            answer_text = f"<answer>{correct_answer}</answer>"  
+  
+            if self.include_thinking:  
+                # Optionally include chain-of-thought reasoning placeholder  
+                answer_text = f"<thinking>Your thought process here.</thinking>\n{answer_text}"  
+  
+            # Tokenize the answer  
+            encoded_answer = self.tokenizer(  
+                answer_text,  
+                max_length=self.max_output_length,  
+                padding='max_length',  
+                truncation=True,  
+                return_tensors='pt',  
+                add_special_tokens=True  
+            )  
+            labels = encoded_answer['input_ids'].squeeze()  
+  
+            self.cached_data.append({  
+                'input_ids': input_ids,  
+                'attention_mask': attention_mask,  
+                'labels': labels,  
+                'correct_answer': correct_answer  
+            })  
+  
+    def __len__(self):  
+        return len(self.cached_data)  
+  
+    def __getitem__(self, idx):  
+        return self.cached_data[idx]  
+  
+    def extract_answer(self, output_text):  
+        # Use regex to extract answer from between  tags  
+        match = re.search(r'<answer>(.*?)</answer>', output_text, re.DOTALL)
+        if match:  
+            answer = match.group(1).strip()  
+            return answer  
+        else:  
+            # If tags are missing, try to extract the answer heuristically  
+            possible_answers = ['A', 'B', 'C', 'D']  
+            for option in possible_answers:  
+                if option in output_text:  
+                    return option  
+            return None  # Unable to extract answer  
+  
+    def accuracy_metric(self, predictions, references):  
+        correct = 0  
+        total = len(predictions)  
+        for pred, ref in zip(predictions, references):  
+            pred_answer = self.extract_answer(pred)  
+            ref_answer = ref.strip()  
+  
+            if pred_answer is None:  
+                continue  # Skip if unable to extract answer  
+  
+            # Make comparison flexible to formatting  
+            if pred_answer.upper().strip() == ref_answer.upper().strip():  
+                correct += 1  
+            else:  
+                # Additional checks for flexibility  
+                pred_answer = pred_answer.upper().strip()  
+                ref_answer = ref_answer.upper().strip()  
+  
+                # Map full words to letters if necessary (e.g., "Option A" -> "A")  
+                option_mapping = {  
+                    "OPTION A": "A", "OPTION B": "B", "OPTION C": "C", "OPTION D": "D",  
+                    "A.": "A", "B.": "B", "C.": "C", "D.": "D"  
+                }  
+                pred_answer = option_mapping.get(pred_answer, pred_answer)  
+                ref_answer = option_mapping.get(ref_answer, ref_answer)  
+  
+                if pred_answer == ref_answer:  
+                    correct += 1  
+  
+        accuracy = correct / total if total > 0 else 0  
+        return accuracy  
+
+
 class MLQADataset(BaseDataset):  
     def load_data(self):  
         dataset = load_dataset("mlqa", 'en.en')  

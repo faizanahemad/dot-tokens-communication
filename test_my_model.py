@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader  
 from transformers import AutoTokenizer  
 from model_fsdp import DualModelTransformer  
+from model_strong_baselines import OneModelTransformer
 from my_datasets import get_dataset_class, get_validation_split  
 from utils import set_seed, create_model  
 from tqdm import tqdm  
@@ -27,6 +28,7 @@ config = {
     "max_output_length": 128,  
     "dataset_name": "gsm8k",  
     "seed": 42,  
+    "model_cls": OneModelTransformer,
 }  
   
 set_seed(config["seed"])  
@@ -100,7 +102,7 @@ def main():
     logger.info(f"Using device: {device}")  
   
     # Create model without FSDP  
-    model = DualModelTransformer(  
+    model = config["model_cls"](  
         large_model_name=config["large_model_name"],  
         small_model_name=config["small_model_name"],  
         stop_tokens=config["stop_tokens"],  
@@ -113,7 +115,7 @@ def main():
     )  
   
     # Load the saved model  
-    checkpoint = torch.load('final_dual_model_gsm8k.pth', map_location=device)  
+    checkpoint = torch.load(f'final_dual_model_gsm8k_{config["model_cls"].__name__}.pth', map_location=device)  
     model.load_state_dict(checkpoint)  
     model.to(device)  
   
@@ -123,9 +125,12 @@ def main():
     test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, device, mode="baseline")  
     logger.info(f"Baseline Loss: {test_loss:.4f}, Baseline Metrics: {test_metrics}")  
     
-    logger.info("Starting evaluation...")  
-    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, device, mode="large-baseline")  
-    logger.info(f"Large-baseline Loss: {test_loss:.4f}, Large-baseline Metrics: {test_metrics}")  
+    try:    
+        logger.info("Starting evaluation...")  
+        test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, device, mode="large-baseline")  
+        logger.info(f"Large-baseline Loss: {test_loss:.4f}, Large-baseline Metrics: {test_metrics}")  
+    except Exception as e:
+        logger.info(f"Error in large-baseline evaluation: {e}")
   
     test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, device, mode="test")  
     logger.info(f"Test Loss (test mode): {test_loss:.4f}, Test Metrics: {test_metrics}")  
