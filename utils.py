@@ -24,7 +24,8 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import (
     FullStateDictConfig,
     StateDictType,
 )
-
+from model_strong_baselines import OneModelTransformer
+from model_fsdp import DualModelTransformer
 import random  
 import numpy as np  
 from tqdm import tqdm  
@@ -43,8 +44,8 @@ def set_seed(seed):
     
     
 # Model definition function  
-def create_model(config, fsdp_config):  
-    return DualModelTransformer(  
+def create_model(config, model_cls, fsdp_config):  
+    return model_cls(  
         config["large_model_name"],  
         config["small_model_name"],  
         config["stop_tokens"],  
