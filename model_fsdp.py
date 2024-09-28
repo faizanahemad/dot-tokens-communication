@@ -1071,6 +1071,7 @@ def load_model(model, path):
     load_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)  
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, load_policy):  
         model.load_state_dict(state_dict)  
+    return model
   
 def setup_fsdp():  
     dist.init_process_group("nccl")  

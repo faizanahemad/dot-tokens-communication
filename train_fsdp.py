@@ -79,18 +79,18 @@ config = {
     "large_model_dim": 3072,  
     "learning_rate": 1e-5,  
     "batch_size": 16,  
-    "num_epochs": 50,  
+    "num_epochs": 5,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
     "train_subset_size": None,  # Set to None to use full dataset  
-    "test_subset_size": None,    # Set to None to use full dataset  
+    "test_subset_size": 16*8,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
     "gradient_accumulation_steps": 1,  
     "num_workers": 4,  
-    "max_input_length": 64,  
-    "max_output_length": 16,
+    "max_input_length": 256,  
+    "max_output_length": 128,
     "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
-    "dataset_name": "complete_the_sentence",  # Specify the dataset to use  # complete_the_sentence # fill_the_blank
+    "dataset_name": "gsm8k",  # Specify the dataset to use  # complete_the_sentence # fill_the_blank
     "seed": 42,  
 }  
   
@@ -230,10 +230,19 @@ def main():
   
     train_loader, test_loader, tokenizer, train_dataset, test_dataset = process_data(config)  
     model = create_model(config, fsdp_config)  
+    
+    # load model from checkpoint
+    # Load model from checkpoint
+    if dist.get_rank() == 0:
+        checkpoint = torch.load('final_dual_model_gsm8k.pth', map_location='cpu')
+        model.load_state_dict(checkpoint)
+    torch.distributed.barrier()  
+    
   
     # Wrap the entire model with FSDP  
     fsdp_config['auto_wrap_policy'] = None  
     model = FSDP(model, **fsdp_config)  
+    
   
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=config["learning_rate"], weight_decay=config["weight_decay"])  
     if config["scheduler"] == "OneCycleLR":  
@@ -264,22 +273,25 @@ def main():
   
     best_metric = 0  
     test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="baseline")  
-    train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="baseline")  
-    print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}, Baseline Train Loss: {train_loss_eval:.4f}, Baseline Train Metrics: {train_metrics}")
+    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="baseline")  
+    # print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}, Baseline Train Loss: {train_loss_eval:.4f}, Baseline Train Metrics: {train_metrics}")
+    print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}")
     
-    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="large-baseline")  
-    train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="large-baseline")  
-    print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}, Large Baseline Train Loss: {train_loss_eval:.4f}, Large Baseline Train Metrics: {train_metrics}")
+    # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="large-baseline")  
+    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="large-baseline")  
+    # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}, Large Baseline Train Loss: {train_loss_eval:.4f}, Large Baseline Train Metrics: {train_metrics}")
+    # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}")
     
     for epoch in range(config["num_epochs"]):  
         train_loss = train_epoch(model, epoch, train_loader, optimizer, scheduler, config)  
         test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="test")  
-        train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="train")  
+        # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="train")  
         torch.distributed.barrier()  
   
         if dist.get_rank() == 0:  
             logger.info(f"Epoch {epoch+1}/{config['num_epochs']}:")  
-            logger.info(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}, Train Metrics: {train_metrics}")
+            # logger.info(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}, Train Metrics: {train_metrics}")
+            logger.info(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}")
   
             writer.add_scalar('Loss/train', train_loss, epoch)  
             writer.add_scalar('Loss/test', test_loss, epoch)  

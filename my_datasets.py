@@ -94,11 +94,20 @@ class GSM8KDataset(BaseDataset):
         return self.cached_data  
   
     def extract_answer(self, text):  
+        
         pos = text.find('####')  
         if pos == -1:  
             return None  
         answer = text[pos+4:].strip()  
-        return ''.join(answer.split()).lower()  
+        # import re
+        # match = re.search(r'####\s*(\S+)', answer)
+        # if match:
+        #     answer = match.group(1).strip()
+        # else:
+        #     return None
+        answer = ''.join(answer.split()).lower()  
+        # print(text.replace('\n', ' | '), " || ", answer.replace('\n', ' | '))
+        return answer
   
     def get_evaluation_metrics(self):  
         # For GSM8K, we use exact match accuracy  
@@ -110,8 +119,27 @@ class GSM8KDataset(BaseDataset):
                     correct += 1  
                 total += 1  
             accuracy = correct / total if total > 0 else 0  
-            return {'accuracy': accuracy}  
-        return {'exact_match': exact_match}  
+            return {'exact_match': accuracy}  
+        
+        def reference_contained(predictions, references):
+            correct = 0
+            total = 0
+            for pred, ref in zip(predictions, references):
+                total += 1
+                if pred is None or ref is None:
+                    continue
+                pred = pred.strip().lower().replace("\n", " ")
+                ref = ref.strip().lower().replace("\n", " ")
+                # lower case both pred and ref
+                
+                if pred is not None and ref is not None and ref.lower() in pred.lower():
+                    correct += 1
+                
+                # print(pred, ref, " | ", ref.lower() in pred.lower(), " | ", correct, total)
+            accuracy = correct / total if total > 0 else 0
+            # print(f"Accuracy: {accuracy:.2f} ({correct}/{total} correct)")
+            return {'reference_contained': accuracy}
+        return {'exact_match': exact_match, 'reference_contained': reference_contained} 
   
 class MLQADataset(BaseDataset):  
     def load_data(self):  
