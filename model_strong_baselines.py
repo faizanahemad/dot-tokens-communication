@@ -42,6 +42,7 @@ class OneModelTransformer(nn.Module):
         fsdp_config: dict = None,
         enable_checkpointing: bool = True,
         enable_flash_attention: bool = True,
+        **kwargs
     ):  
         super().__init__()  
   
@@ -72,6 +73,8 @@ class OneModelTransformer(nn.Module):
         self._init_weights(self.ffn_large_to_small)  
 
         self.embedding_layer = copy.deepcopy(self._get_embedding_layer(self.small_model))
+        for param in self.embedding_layer.parameters():
+            param.requires_grad = False
         
         # Enable gradient checkpointing  
         if enable_checkpointing:  
@@ -600,6 +603,9 @@ class OneModelTransformer(nn.Module):
         # Exclude positions corresponding to the input_prompt and knowledge_vector  
         loss_mask = torch.zeros_like(target_ids, dtype=torch.bool)  
         loss_mask[:, seq_len_prompt:] = True  # Start computing loss from the labels  
+        loss_mask[:, :seq_len_prompt] = False  # Exclude the input_prompt from loss computation
+        # Exclude padding tokens from loss computation
+        loss_mask = loss_mask & (input_ids != self.small_tokenizer.pad_token_id)
     
         # Flatten logits, target_ids, and loss_mask  
         logits_flat = logits.view(-1, logits.size(-1))  
@@ -616,61 +622,3 @@ class OneModelTransformer(nn.Module):
     
         return loss  
 
-def save_model_temp(model, path):  
-    save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)  
-    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):  
-        state_dict = model.state_dict()  
-    if dist.get_rank() == 0:  
-        torch.save(state_dict, path)  
-        
-
-def save_model(model, path):  
-    save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)  
-    torch.distributed.barrier()  
-    if dist.get_rank() == 0:  
-        logger.info("Entering state_dict_type context manager for saving model.")  
-    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):  
-        logger.info(f"Rank {dist.get_rank()} is calling model.state_dict()")  
-        state_dict = model.state_dict()  
-        logger.info(f"Rank {dist.get_rank()} has completed model.state_dict()")  
-    torch.distributed.barrier()  
-    if dist.get_rank() == 0:  
-        logger.info("Saving model on rank 0.")  
-        torch.save(state_dict, path)  
-        logger.info("Model saved successfully.")  
-    torch.distributed.barrier()  
-    if dist.get_rank() == 0:  
-        logger.info("Completed save_model function.")  
-
-  
-def load_model(model, path):  
-    if dist.get_rank() == 0:  
-        state_dict = torch.load(path)  
-    else:  
-        state_dict = None  
-    dist.barrier()  
-    load_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)  
-    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, load_policy):  
-        model.load_state_dict(state_dict)  
-    return model
-  
-def setup_fsdp():  
-    dist.init_process_group("nccl")  
-    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))  
-  
-    mp_policy = MixedPrecision(  
-        param_dtype=torch.bfloat16,  
-        reduce_dtype=torch.bfloat16,  
-        buffer_dtype=torch.bfloat16,  
-    )  
-  
-    fsdp_config = dict(  
-        auto_wrap_policy=size_based_auto_wrap_policy,  
-        mixed_precision=mp_policy,  
-        sharding_strategy=ShardingStrategy.FULL_SHARD,  
-        device_id=torch.cuda.current_device(),  
-        backward_prefetch=BackwardPrefetch.BACKWARD_PRE,  
-        cpu_offload=CPUOffload(offload_params=False),  
-    )  
-  
-    return fsdp_config  

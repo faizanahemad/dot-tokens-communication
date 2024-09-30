@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import OneCycleLR  
 from transformers import AutoTokenizer  
 from model_fsdp import DualModelTransformer, setup_fsdp, save_model, load_model  
+from model_lora import LoRAModelTransformer, calculate_lora_parameters, lora_setup_fsdp
 from torch.distributed.fsdp import (  
     FullyShardedDataParallel as FSDP,  
     MixedPrecision,  
@@ -46,45 +47,21 @@ warnings.filterwarnings("ignore")
 # Set up logging  
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')  
 logger = logging.getLogger(__name__)  
-  
-# # Configuration  
-# config = {  
-#     "large_model_name": "EleutherAI/pythia-1b-deduped",  
-#     "small_model_name": "EleutherAI/pythia-410m",  
-#     "stop_tokens": [], # [".", "!", "?"],  
-#     "small_model_dim": 1024,  
-#     "large_model_dim": 2048,  
-#     "learning_rate": 1e-3,  
-#     "batch_size": 8,  
-#     "num_epochs": 100,  
-#     "warmup_steps": 10,  
-#     "max_grad_norm": 1.0,  
-#     "train_subset_size": 32,  # Set to None to use full dataset  
-#     "test_subset_size": 32,    # Set to None to use full dataset  
-#     "weight_decay": 0.001,  
-#     "gradient_accumulation_steps": 1,  
-#     "num_workers": 4,  
-#     "max_input_length": 256,  
-#     "max_output_length": 8,
-#     "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
-#     "dataset_name": "complete_the_sentence",  # Specify the dataset to use  
-#     "seed": 42,  
-# }  
 
 
 config = {  
-    "large_model_name": "meta-llama/Llama-3.2-3B-Instruct",  
-    "small_model_name": "meta-llama/Llama-3.2-1B-Instruct",  
+    "large_model_name": "unsloth/Meta-Llama-3.1-8B-Instruct",  # "EleutherAI/pythia-1b-deduped",  
+    "small_model_name": "meta-llama/Llama-3.2-1B-Instruct",  # "EleutherAI/pythia-410m",  
     "stop_tokens": [], # [".", "!", "?"],  
     "small_model_dim": 2048,  
-    "large_model_dim": 3072,  
-    "learning_rate": 5e-5,  
+    "large_model_dim": 4096,  
+    "learning_rate": 2e-5,  
     "batch_size": 16,  
-    "num_epochs": 10,  
+    "num_epochs": 5,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
-    "train_subset_size": None,  # Set to None to use full dataset  
-    "test_subset_size": 16*8,    # Set to None to use full dataset  
+    "train_subset_size": 16*8,  # Set to None to use full dataset  
+    "test_subset_size": 16*16,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
     "gradient_accumulation_steps": 1,  
     "num_workers": 4,  
@@ -93,7 +70,7 @@ config = {
     "scheduler": None,  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
     "dataset_name": "gsm8k",  # Specify the dataset to use  # complete_the_sentence # fill_the_blank
     "seed": 42,  
-    "model_cls": DualModelTransformer,
+    "model_cls": LoRAModelTransformer,
     
 }  
   
@@ -127,8 +104,12 @@ def process_data(config):
   
     tokenizer = train_dataset.tokenizer  # Use the tokenizer from the dataset class  
   
-    train_sampler = DistributedSampler(train_dataset, shuffle=True)  
-    test_sampler = DistributedSampler(test_dataset, shuffle=False)  
+    if torch.distributed.is_initialized():
+        train_sampler = DistributedSampler(train_dataset, shuffle=True)
+        test_sampler = DistributedSampler(test_dataset, shuffle=False)
+    else:
+        train_sampler = torch.utils.data.RandomSampler(train_dataset)
+        test_sampler = torch.utils.data.SequentialSampler(test_dataset)
   
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], sampler=train_sampler, num_workers=config["num_workers"])  
     test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], sampler=test_sampler, num_workers=config["num_workers"])  
@@ -139,8 +120,9 @@ def process_data(config):
 def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):  
     model.train()  
     total_loss = 0  
-    train_loader.sampler.set_epoch(epoch)  
-    progress_bar = tqdm(train_loader, desc="Training", disable=not dist.get_rank() == 0)  
+    if torch.distributed.is_initialized():
+        train_loader.sampler.set_epoch(epoch)  
+    progress_bar = tqdm(train_loader, desc="Training", disable=torch.distributed.is_initialized() and not dist.get_rank() == 0)  
   
     for step, batch in enumerate(progress_bar):  
         batch = {k: v.to(torch.cuda.current_device()) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}  
@@ -158,7 +140,7 @@ def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):
   
         total_loss += loss.item() * config["gradient_accumulation_steps"]  
   
-        if dist.get_rank() == 0:  
+        if torch.distributed.is_initialized() and dist.get_rank() == 0:  
             progress_bar.set_postfix({'loss': loss.item() * config["gradient_accumulation_steps"]})  
   
     return total_loss / len(train_loader)  
@@ -167,13 +149,12 @@ def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):
 def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):  
     model.eval()  
     total_loss = 0  
-    progress_bar = tqdm(data_loader, desc="Evaluating", disable=not dist.get_rank() == 0)  
+    progress_bar = tqdm(data_loader, desc="Evaluating", disable= torch.distributed.is_initialized() and not dist.get_rank() == 0)  
     metric_functions = dataset.get_evaluation_metrics()  
-  
     # Initialize metric accumulators  
     metric_accumulators = {name: 0.0 for name in metric_functions.keys()}  
     total_samples = 0  
-  
+
     with torch.no_grad():  
         for batch in progress_bar:  
             batch = {k: v.to(torch.cuda.current_device()) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}  
@@ -211,17 +192,19 @@ def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):
   
             total_samples += len(predicted_answers)  
   
-            if dist.get_rank() == 0:  
+            if torch.distributed.is_initialized() and dist.get_rank() == 0:  
                 progress_bar.set_postfix({'loss': loss.item()})  
   
     # Gather results from all processes  
     total_samples_tensor = torch.tensor(total_samples, device=torch.cuda.current_device())  
-    dist.all_reduce(total_samples_tensor, op=dist.ReduceOp.SUM)  
+    if torch.distributed.is_initialized():
+        dist.all_reduce(total_samples_tensor, op=dist.ReduceOp.SUM)  
     total_samples = total_samples_tensor.item()  
   
     for name in metric_accumulators:  
         metric_tensor = torch.tensor(metric_accumulators[name], device=torch.cuda.current_device())  
-        dist.all_reduce(metric_tensor, op=dist.ReduceOp.SUM)  
+        if torch.distributed.is_initialized():
+            dist.all_reduce(metric_tensor, op=dist.ReduceOp.SUM)  
         metric_accumulators[name] = metric_tensor.item() / total_samples if total_samples > 0 else 0.0  
   
     return total_loss / len(data_loader), metric_accumulators  
@@ -229,10 +212,31 @@ def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):
 # Main training and evaluation pipeline  
 def main():  
     # Setup FSDP  
-    fsdp_config = setup_fsdp()  
+    
+    
+    # Wrap the entire model with FSDP  
+    if config["model_cls"] == LoRAModelTransformer:
+        fsdp_config = setup_fsdp()  
+        lora_fsdp_config = lora_setup_fsdp()
+        # use_orig_params=True,  
+        fsdp_config['use_orig_params'] = True
+        fsdp_config['auto_wrap_policy'] = None
+        model = create_model(config, model_cls=config["model_cls"], fsdp_config=fsdp_config, lora_fsdp_config=lora_fsdp_config) 
+        fsdp_config['auto_wrap_policy'] = None  
+        model = FSDP(model, **fsdp_config)  
+         
+        
+    else:
+        fsdp_config = setup_fsdp()  
+        fsdp_config['auto_wrap_policy'] = None  
+        model = create_model(config, model_cls=config["model_cls"], fsdp_config=fsdp_config)  
+        model = FSDP(model, **fsdp_config)  
+    # fsdp_config["use_orig_params"] = True
+    
+    
   
     train_loader, test_loader, tokenizer, train_dataset, test_dataset = process_data(config)  
-    model = create_model(config, model_cls=config["model_cls"], fsdp_config=fsdp_config)  
+    
     local_rank = os.environ['LOCAL_RANK']
     
     # load model from checkpoint
@@ -242,13 +246,24 @@ def main():
     #     model.load_state_dict(checkpoint)
     torch.distributed.barrier()  
     
+    # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="baseline")  
+    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="baseline")  
+    # print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}, Baseline Train Loss: {train_loss_eval:.4f}, Baseline Train Metrics: {train_metrics}")
+    # print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}")
+    
+    # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="large-baseline")  
+    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="large-baseline")  
+    # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}, Large Baseline Train Loss: {train_loss_eval:.4f}, Large Baseline Train Metrics: {train_metrics}")
+    # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}")
+    
   
-    # Wrap the entire model with FSDP  
-    fsdp_config['auto_wrap_policy'] = None  
-    model = FSDP(model, **fsdp_config)  
+    
     
   
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=config["learning_rate"], weight_decay=config["weight_decay"])  
+    if dist.get_rank() == 0:  
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Number of trainable parameters: {trainable_params}, in millions: {(trainable_params / 1e6):.2f}M")
     if config["scheduler"] == "OneCycleLR":  
         scheduler = OneCycleLR(  
             optimizer,  
@@ -276,15 +291,6 @@ def main():
         writer = SummaryWriter(log_dir=f'runs/{config["dataset_name"]}_training')  
   
     best_metric = 0  
-    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="baseline")  
-    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="baseline")  
-    # print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}, Baseline Train Loss: {train_loss_eval:.4f}, Baseline Train Metrics: {train_metrics}")
-    print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}")
-    
-    # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="large-baseline")  
-    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="large-baseline")  
-    # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}, Large Baseline Train Loss: {train_loss_eval:.4f}, Large Baseline Train Metrics: {train_metrics}")
-    # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}")
     
     for epoch in range(config["num_epochs"]):  
         train_loss = train_epoch(model, epoch, train_loader, optimizer, scheduler, config)  
@@ -333,6 +339,115 @@ def main():
         logger.info(f"Best Test {primary_metric.capitalize()}: {best_metric:.4f}")  
   
     dist.destroy_process_group()  
+    
+def main_non_fsdp():  
+    # Setup FSDP  
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Wrap the entire model with FSDP  
+    if config["model_cls"] == LoRAModelTransformer:
+        model = create_model(config, model_cls=config["model_cls"], fsdp_config=None) 
+         
+        
+    else:
+        model = create_model(config, model_cls=config["model_cls"], fsdp_config=None)  
+    # fsdp_config["use_orig_params"] = True
+    model.to(device)
+    
+    
+  
+    train_loader, test_loader, tokenizer, train_dataset, test_dataset = process_data(config)  
+    
+    # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="baseline")  
+    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="baseline")  
+    # print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}, Baseline Train Loss: {train_loss_eval:.4f}, Baseline Train Metrics: {train_metrics}")
+    # print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}")
+    
+    # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="large-baseline")  
+    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="large-baseline")  
+    # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}, Large Baseline Train Loss: {train_loss_eval:.4f}, Large Baseline Train Metrics: {train_metrics}")
+    # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}")
+    
+  
+    
+    
+  
+    optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=config["learning_rate"], weight_decay=config["weight_decay"])  
+     
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Number of trainable parameters: {trainable_params}, in millions: {(trainable_params / 1e6):.2f}M")
+    if config["scheduler"] == "OneCycleLR":  
+        scheduler = OneCycleLR(  
+            optimizer,  
+            max_lr=config["learning_rate"],  
+            steps_per_epoch=len(train_loader) // config["gradient_accumulation_steps"],  
+            epochs=config["num_epochs"],  
+            pct_start=0.2  
+        )  
+    elif config["scheduler"] == "CosineAnnealingLR":  
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["num_epochs"], eta_min=0, last_epoch=-1, verbose=False)  
+    elif config["scheduler"] == "StepLR":  
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  
+    elif config["scheduler"] == "MultiStepLR":  
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 100, 150], gamma=0.1)  
+    elif config["scheduler"] == "WarmupScheduler":  
+        def warmup_lambda(epoch):  
+            if epoch < config["warmup_steps"]:  
+                return float(epoch) / float(max(1, config["warmup_steps"]))  
+            return 1.0  
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lambda)  
+    else:  
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1)  
+  
+    writer = SummaryWriter(log_dir=f'runs/{config["dataset_name"]}_training')  
+  
+    best_metric = 0  
+    
+    for epoch in range(config["num_epochs"]):  
+        train_loss = train_epoch(model, epoch, train_loader, optimizer, scheduler, config)  
+        test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="test")  
+        # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="train")  
+         
+  
+        
+        logger.info(f"Epoch {epoch+1}/{config['num_epochs']}:")  
+        # logger.info(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}, Train Metrics: {train_metrics}")
+        logger.info(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}")
+
+        writer.add_scalar('Loss/train', train_loss, epoch)  
+        writer.add_scalar('Loss/test', test_loss, epoch)  
+        for metric_name, value in test_metrics.items():  
+            writer.add_scalar(f'{metric_name}/test', value, epoch)  
+  
+            
+            
+        if torch.distributed.is_initialized():
+            logger.info(f"Process {dist.get_rank()} finished epoch {epoch+1}")  
+        
+        # Save the best model based on the primary metric  
+        primary_metric = 'accuracy' if 'accuracy' in test_metrics else list(test_metrics.keys())[0]  
+        if test_metrics[primary_metric] > best_metric and epoch > 0:  
+            best_metric = test_metrics[primary_metric]  
+            
+            save_model(model, f"best_dual_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")  
+        
+        if torch.distributed.is_initialized():
+            logger.info(f"Proceeding to save final model on rank: {dist.get_rank()}")
+        
+        if epoch == config["num_epochs"] - 1:  
+            logger.info(f"Saving final model")
+            save_model(model, f"final_dual_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")  
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()  
+        logger.info(f"Done saving final model")
+  
+    
+    writer.close()  
+    logger.info(f"Best Test {primary_metric.capitalize()}: {best_metric:.4f}")  
+  
+    
+
   
 if __name__ == "__main__":  
-    main()  
+    main_non_fsdp()  

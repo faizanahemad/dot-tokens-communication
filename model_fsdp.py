@@ -42,6 +42,7 @@ class DualModelTransformer(nn.Module):
         fsdp_config: dict = None,
         enable_checkpointing: bool = True,
         enable_flash_attention: bool = True,
+        **kwargs
     ):  
         super().__init__()  
   
@@ -77,6 +78,10 @@ class DualModelTransformer(nn.Module):
 
         self.embedding_layer = copy.deepcopy(self._get_embedding_layer(self.small_model))
         self.embedding_layer_large = copy.deepcopy(self._get_embedding_layer(self.large_model))
+        for param in self.embedding_layer.parameters():
+            param.requires_grad = False
+        for param in self.embedding_layer_large.parameters():
+            param.requires_grad = False
 
         # Enable gradient checkpointing  
         if enable_checkpointing:  
@@ -1019,6 +1024,9 @@ class DualModelTransformer(nn.Module):
         # Exclude positions corresponding to the input_prompt and knowledge_vector  
         loss_mask = torch.zeros_like(target_ids, dtype=torch.bool)  
         loss_mask[:, seq_len_prompt:] = True  # Start computing loss from the labels  
+        loss_mask[:, :seq_len_prompt] = False  # Exclude the input_prompt from loss computation
+        # Exclude padding tokens from loss computation
+        loss_mask = loss_mask & (input_ids != self.small_tokenizer.pad_token_id)
     
         # Flatten logits, target_ids, and loss_mask  
         logits_flat = logits.view(-1, logits.size(-1))  

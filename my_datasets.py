@@ -60,6 +60,7 @@ class GSM8KDataset(BaseDataset):
   
             # Tokenize the prompt with left padding  
             self.tokenizer.padding_side = 'left'  
+            self.tokenizer.truncation_side = 'left'  
             encoded_prompt = self.tokenizer(  
                 prompt,  
                 max_length=self.max_input_length,  
@@ -73,7 +74,8 @@ class GSM8KDataset(BaseDataset):
             attention_mask = encoded_prompt['attention_mask'].squeeze()  
   
             # Tokenize the answer with right padding  
-            self.tokenizer.padding_side = 'right'  
+            self.tokenizer.padding_side = 'right' 
+            self.tokenizer.truncation_side = 'right'   
             encoded_answer = self.tokenizer(  
                 answer,  
                 max_length=self.max_output_length,  
