@@ -60,7 +60,7 @@ config = {
     "num_epochs": 5,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
-    "train_subset_size": 16*8,  # Set to None to use full dataset  
+    "train_subset_size": None,  # Set to None to use full dataset  
     "test_subset_size": 16*16,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
     "gradient_accumulation_steps": 1,  
@@ -450,4 +450,4 @@ def main_non_fsdp():
 
   
 if __name__ == "__main__":  
-    main_non_fsdp()  
+    main()  

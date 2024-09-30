@@ -82,9 +82,9 @@ class LoRAModelTransformer(nn.Module):
    
         
         # Enable gradient checkpointing  
-        if False:  
+        if enable_checkpointing:  
             if hasattr(self.small_model, 'gradient_checkpointing_enable'):  
-                self.small_model.gradient_checkpointing_enable()  
+                self.small_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})  
             else:  
                 self.small_model.config.gradient_checkpointing = True  
         # fsdp_config_lora = setup_fsdp_for_lora()
@@ -96,6 +96,7 @@ class LoRAModelTransformer(nn.Module):
         #     if param.requires_grad:  
         #         print(f"Parameter {name} requires grad and has shape {param.shape}")  
 
+        self.small_model.base_model.enable_input_require_grads()
         if fsdp_config is not None:
             self.embedding_layer = FSDP(self.embedding_layer, **fsdp_config)
             lora_fsdp_config = kwargs.get("lora_fsdp_config", fsdp_config)
