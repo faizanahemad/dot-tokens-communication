@@ -1,5 +1,5 @@
-# datasets.py  
 
+from large_dataset import get_dataset, create_pretraining_dataset
 import torch  
 from torch.utils.data import Dataset  
 from datasets import load_dataset  
@@ -602,6 +602,7 @@ def get_dataset_class(dataset_name):
         'xnli': XNLIDataset,  
         'fill_the_blank': FillTheBlankDataset,
         'complete_the_sentence': CompleteTheSentenceDataset,
+        'pretraining': create_pretraining_dataset,
         # Add other datasets here  
     }  
     return dataset_classes.get(dataset_name.lower())  
@@ -1630,6 +1631,7 @@ def get_validation_split(dataset_name):
         'xnli': 'validation',
         'fill_the_blank': 'test',
         'complete_the_sentence': 'test',
+        'pretraining': 'test',
         # Add other datasets here
     }
     return validation_splits.get(dataset_name.lower())

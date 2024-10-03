@@ -605,7 +605,7 @@ class OneModelTransformer(nn.Module):
         loss_mask[:, seq_len_prompt:] = True  # Start computing loss from the labels  
         loss_mask[:, :seq_len_prompt] = False  # Exclude the input_prompt from loss computation
         # Exclude padding tokens from loss computation
-        loss_mask = loss_mask & (input_ids != self.small_tokenizer.pad_token_id)
+        loss_mask = loss_mask & (target_ids != self.small_tokenizer.pad_token_id)
     
         # Flatten logits, target_ids, and loss_mask  
         logits_flat = logits.view(-1, logits.size(-1))  
