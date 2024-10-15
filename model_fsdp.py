@@ -1,3 +1,4 @@
+from cgitb import small
 import torch  
 import os
 # Set TOKENIZERS_PARALLELISM to true in environment variables
@@ -29,6 +30,62 @@ import torch.distributed as dist
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')  
 logger = logging.getLogger(__name__)  
+
+import torch  
+import torch.nn as nn  
+import torch.nn.functional as F  
+
+def init_weights(m):  
+    if isinstance(m, nn.Linear):  
+        nn.init.xavier_uniform_(m.weight)  
+        if m.bias is not None:  
+            nn.init.zeros_(m.bias)  
+    elif isinstance(m, nn.LayerNorm):  
+        nn.init.ones_(m.weight)  
+        nn.init.zeros_(m.bias)  
+
+  
+class SwiGLU(nn.Module):  
+    def __init__(self, in_features, out_features=None, bias=True):  
+        super(SwiGLU, self).__init__()  
+        if out_features is None:  
+            out_features = in_features  
+        self.linear = nn.Linear(in_features, out_features * 2, bias=bias, dtype=torch.bfloat16)  
+        self.apply(init_weights)
+          
+    def forward(self, x):  
+        x_proj = self.linear(x)  
+        x1, x2 = x_proj.chunk(2, dim=-1)  # Split along the last dimension  
+        return F.silu(x1) * x2  
+    
+    
+class FFN(nn.Module):
+    def __init__(self, in_features, out_features=None, bias=True):
+        super(FFN, self).__init__()
+        self.norm = nn.LayerNorm(in_features, dtype=torch.bfloat16)
+        self.linear1 = nn.Linear(in_features, 2 * out_features, bias=bias, dtype=torch.bfloat16)
+        self.linear2 = nn.Linear(2 * out_features, out_features, bias=bias, dtype=torch.bfloat16)
+        self.gelu = nn.GELU()
+        self.apply(init_weights)
+        
+    def forward(self, x):
+        orig_x = x
+        x = self.norm(x)
+        x = self.linear1(x)
+        x = self.gelu(x)
+        x = self.linear2(x)
+        x_dim = x.size(-1)
+        orig_x_dim = orig_x.size(-1)
+        
+        if x_dim < orig_x_dim:
+            return orig_x[..., :x_dim] + x
+        elif x_dim > orig_x_dim:
+            padding = torch.zeros(orig_x.size()[:-1] + (x_dim - orig_x_dim,), dtype=orig_x.dtype, device=orig_x.device)
+            padded_orig_x = torch.cat([orig_x, padding], dim=-1)
+            return padded_orig_x + x
+        else:
+            return x + orig_x
+
   
 class DualModelTransformer(nn.Module):  
     def __init__(  
@@ -47,6 +104,11 @@ class DualModelTransformer(nn.Module):
         super().__init__()  
   
         # Initialize models  
+        self.stop_tokens = stop_tokens  
+        self.small_model_dim = small_model_dim  
+        self.large_model_dim = large_model_dim  
+        self.max_length = max_length  
+        
         self.large_model = AutoModelForCausalLM.from_pretrained(large_model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)  
         self.small_model = AutoModelForCausalLM.from_pretrained(small_model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)  
   
@@ -60,21 +122,27 @@ class DualModelTransformer(nn.Module):
   
         # Initialize FFNs with improved activation and initialization  
         self.ffn_small_to_large = nn.Sequential(  
-            nn.Linear(small_model_dim, large_model_dim, dtype=torch.bfloat16),  
-            nn.GELU(),  
-            nn.Linear(large_model_dim, large_model_dim, dtype=torch.bfloat16),
-            nn.LayerNorm(large_model_dim, dtype=torch.bfloat16)
+            FFN(small_model_dim * 2, large_model_dim),  
+            # SwiGLU(large_model_dim),  
+            FFN(large_model_dim, large_model_dim),
+            nn.LayerNorm(large_model_dim, dtype=torch.bfloat16),
         )  
         self.ffn_large_to_small = nn.Sequential(  
-            nn.Linear(large_model_dim, small_model_dim, dtype=torch.bfloat16),  
-            nn.GELU(),  
-            nn.Linear(small_model_dim, small_model_dim, dtype=torch.bfloat16),
+            FFN(large_model_dim, large_model_dim),
+            FFN(large_model_dim, small_model_dim), 
+            # SwiGLU(small_model_dim),  
             nn.LayerNorm(small_model_dim, dtype=torch.bfloat16)
         )  
+        self.query_vector = nn.Embedding(1, small_model_dim)
   
         # Initialize FFN parameters  
         self._init_weights(self.ffn_small_to_large)  
-        self._init_weights(self.ffn_large_to_small)  
+        self._init_weights(self.ffn_large_to_small) 
+        self._init_weights(self.query_vector)
+        
+        logger.info("Calling __init_subclass__ with small_model_dim: %s, large_model_dim: %s", self.small_model_dim, self.large_model_dim)
+        
+        self.__init_subclass__(self.small_model_dim)
 
         self.embedding_layer = copy.deepcopy(self._get_embedding_layer(self.small_model))
         self.embedding_layer_large = copy.deepcopy(self._get_embedding_layer(self.large_model))
@@ -85,6 +153,8 @@ class DualModelTransformer(nn.Module):
 
         # Enable gradient checkpointing  
         if enable_checkpointing:  
+            self.small_model.enable_input_require_grads()
+            self.large_model.enable_input_require_grads()
             if hasattr(self.large_model, 'gradient_checkpointing_enable'):  
                 self.large_model.gradient_checkpointing_enable()  
             else:  
@@ -96,7 +166,12 @@ class DualModelTransformer(nn.Module):
                 self.small_model.config.gradient_checkpointing = True  
 
         
-  
+        saved_model_path = kwargs.get("saved_model_path")
+        device = next(iter(self.parameters())).device
+        if saved_model_path:
+            checkpoint = torch.load(saved_model_path, map_location=device)  
+            self.load_state_dict(checkpoint)  
+        
         # Wrap components with FSDP if config is provided  
         if fsdp_config:  
             self.large_model = FSDP(self.large_model, **fsdp_config)  
@@ -117,19 +192,21 @@ class DualModelTransformer(nn.Module):
             self.large_tokenizer.pad_token = self.large_tokenizer.eos_token  
 
   
-        self.stop_tokens = stop_tokens  
-        self.small_model_dim = small_model_dim  
-        self.large_model_dim = large_model_dim  
-        self.max_length = max_length  
+        
   
+    def __init_subclass__(self):
+        pass
+    
     def _init_weights(self, module):  
         if isinstance(module, nn.Linear):  
-            torch.nn.init.xavier_uniform_(module.weight)  
+            torch.nn.init.xavier_normal_(module.weight)  
             if module.bias is not None:  
                 torch.nn.init.zeros_(module.bias)  
         elif isinstance(module, nn.LayerNorm):
             torch.nn.init.ones_(module.weight)
             torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
   
     def _get_embedding_layer(self, model):  
         if hasattr(model, 'model') and hasattr(model.model, 'embed_tokens'):  
@@ -147,7 +224,8 @@ class DualModelTransformer(nn.Module):
   
     def _get_last_hidden_state(self, model_output):  
         if hasattr(model_output, 'hidden_states') and model_output.hidden_states is not None:  
-            return model_output.hidden_states[-1] + model_output.hidden_states[-2] + model_output.hidden_states[-3] + model_output.hidden_states[-4]  
+            hs = model_output.hidden_states[-1] + model_output.hidden_states[-2] # + model_output.hidden_states[-3] + model_output.hidden_states[-4]  
+            return torch.cat([hs[:, -1, :], hs[:, -2, :]], dim=-1) if hs.size(1) > 1 else hs[:, -1, :]
         else:  
             raise AttributeError(f"Unable to extract last hidden state from model output: {type(model_output).__name__}")  
   
@@ -161,139 +239,7 @@ class DualModelTransformer(nn.Module):
         else:  
             raise AttributeError(f"Unable to extract logits from model output: {type(model_output).__name__}")  
         
-    def generate_text_v3(  
-        self,  
-        input_ids: torch.Tensor,  
-        attention_mask: torch.Tensor,  
-        max_length: int = 100,  
-        temperature: float = 1.0,  
-        sampling_method: str = "greedy",  
-        alpha: float = 1.0  # Scaling parameter for blending embeddings  
-    ) -> str:  
-        """  
-        Generates text by distributing the knowledge vector across non-pad input token embeddings.  You've proposed an insightful approach to mitigate the abrupt change in embedding distribution caused by adding the knowledge vector only to the last token's embedding or as an extra embedding. Your idea is to distribute the knowledge vector across all non-pad input token embeddings by equally dividing it by the number of non-pad tokens and then adding it to each non-pad token's embedding. This should help maintain the overall embedding distribution, allowing the model to perform better without additional training.
     
-        Args:  
-            input_ids (torch.Tensor): Tensor of input token IDs of shape [batch_size, seq_length].  
-            attention_mask (torch.Tensor): Attention mask for the input of shape [batch_size, seq_length].  
-            max_length (int): Maximum number of tokens to generate.  
-            temperature (float): Sampling temperature for controlling randomness.  
-            sampling_method (str): Method of sampling ('greedy' or 'sample').  
-            alpha (float): Scaling factor for blending embeddings.  
-    
-        Returns:  
-            str or List[str]: Generated text as a string if batch_size == 1, else a list of strings.  
-        """  
-        with torch.no_grad():  
-            batch_size, seq_length = input_ids.size()  
-    
-            # Initial processing with the small model to get past_key_values  
-            small_output = self.small_model(  
-                input_ids=input_ids,  
-                attention_mask=attention_mask,  
-                use_cache=True  
-            )  
-            past_key_values = small_output.past_key_values  
-    
-            # Obtain the knowledge vector from the large model  
-            small_last_hidden = self._get_last_hidden_state(small_output)[:, -1, :]  # [batch_size, hidden_size]  
-    
-            # Transform small model's last hidden state to match large model's input dimension  
-            large_input = self.ffn_small_to_large(small_last_hidden).unsqueeze(1)  # [batch_size, 1, large_hidden_size]  
-            large_output = self.large_model(  
-                inputs_embeds=large_input  
-            )  
-    
-            # Get last hidden state from the large model  
-            large_last_hidden = self._get_last_hidden_state(large_output)[:, -1, :]  # [batch_size, large_hidden_size]  
-    
-            # Transform large model's last hidden state back to small model's dimension  
-            knowledge_vector = self.ffn_large_to_small(large_last_hidden)  # [batch_size, hidden_size]  
-    
-            # Distribute the knowledge vector across non-pad token embeddings  
-            embedding_layer = self.embedding_layer  
-            input_embeds = embedding_layer(input_ids)  # [batch_size, seq_length, hidden_size]  
-    
-            # Compute the number of non-pad tokens per batch item  
-            num_non_pad_tokens = attention_mask.sum(dim=1, keepdim=True)  # [batch_size, 1]  
-            num_non_pad_tokens = num_non_pad_tokens.clamp(min=1)  # Avoid division by zero  
-    
-            # Scale the knowledge vector  
-            scaled_knowledge_vector = knowledge_vector / num_non_pad_tokens  # [batch_size, hidden_size]  
-            scaled_knowledge_vector = scaled_knowledge_vector.unsqueeze(1)  # [batch_size, 1, hidden_size]  
-    
-            # Expand attention mask to match the embedding dimensions  
-            attention_mask_expanded = attention_mask.unsqueeze(-1)  # [batch_size, seq_length, 1]  
-    
-            # Compute the additive term  
-            additive_term = scaled_knowledge_vector * attention_mask_expanded * alpha  # [batch_size, seq_length, hidden_size]  
-    
-            # Modify the input embeddings  
-            input_embeds = input_embeds + additive_term  # [batch_size, seq_length, hidden_size]  
-    
-            # Re-run the small model with modified embeddings to update past_key_values  
-            small_output = self.small_model(  
-                inputs_embeds=input_embeds,  
-                attention_mask=attention_mask,  
-                use_cache=True  
-            )  
-            # Update past_key_values after modifying the embeddings  
-            past_key_values = small_output.past_key_values  
-    
-            # Start the generation loop  
-            generated_ids = input_ids.clone()  
-            attention_mask = attention_mask.clone()  
-    
-            for idx in range(max_length):  
-                # Generate next token using past_key_values  
-                output = self.small_model(  
-                    input_ids=generated_ids[:, -1:],  # Only the last generated token ID  
-                    past_key_values=past_key_values,  
-                    use_cache=True  
-                )  
-                logits = self._get_logits(output)[:, -1, :]  # [batch_size, vocab_size]  
-                # Update past_key_values for the next iteration  
-                past_key_values = output.past_key_values  
-    
-                # Sampling  
-                if sampling_method == 'greedy':  
-                    next_token = torch.argmax(logits, dim=-1)  # [batch_size]  
-                elif sampling_method == 'sample':  
-                    probs = torch.nn.functional.softmax(logits / temperature, dim=-1)  
-                    next_token = torch.multinomial(probs, num_samples=1).squeeze(1)  # [batch_size]  
-                else:  
-                    raise ValueError("Invalid sampling method. Choose 'greedy' or 'sample'.")  
-    
-                # Append the generated token to the sequence  
-                generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  # [batch_size, seq_length + idx + 1]  
-    
-                # Update attention_mask for new tokens  
-                attention_mask = torch.cat(  
-                    [attention_mask, torch.ones(batch_size, 1, device=attention_mask.device, dtype=attention_mask.dtype)],  
-                    dim=1  
-                )  # [batch_size, seq_length + idx + 1]  
-    
-                # Decode the current sequence to check for stop conditions  
-                current_output = self.small_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)  
-    
-                # Check for stop tokens in each batch element  
-                stop_generation = [False] * batch_size  
-                for i in range(batch_size):  
-                    if (  
-                        next_token[i].item() == self.small_tokenizer.eos_token_id or  
-                        any(stop_token in current_output[i] for stop_token in self.stop_tokens)  
-                    ):  
-                        stop_generation[i] = True  
-    
-                if all(stop_generation):  
-                    break  
-    
-            # Decode the final generated sequences  
-            final_output = self.small_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)  
-            # For single input, return the first generated text  
-            return final_output[0] if batch_size == 1 else final_output  
-
-  
     def generate_text_v2(  
         self,  
         input_ids: torch.Tensor,  
@@ -327,14 +273,14 @@ class DualModelTransformer(nn.Module):
             past_key_values = small_output.past_key_values  
     
             # Obtain the knowledge vector from the large model  
-            small_last_hidden = self._get_last_hidden_state(small_output)[:, -1, :]  
+            small_last_hidden = self._get_last_hidden_state(small_output)  
             # Transform small model's last hidden state to match large model's input dimension  
             large_input = self.ffn_small_to_large(small_last_hidden).unsqueeze(1)  
             large_output = self.large_model(  
                 inputs_embeds=large_input  
             )  
             # Get last hidden state from the large model  
-            large_last_hidden = self._get_last_hidden_state(large_output)[:, -1, :]  
+            large_last_hidden = self._get_last_hidden_state(large_output)  
             # Transform large model's last hidden state back to small model's dimension  
             knowledge_vector = self.ffn_large_to_small(large_last_hidden)  
     
@@ -505,6 +451,36 @@ class DualModelTransformer(nn.Module):
         final_output = newly_generated_ids
         return final_output  
     
+    def compute_loss(self, logits, target_ids, loss_mask):
+        # Flatten logits, target_ids, and loss_mask  
+        logits_flat = logits.view(-1, logits.size(-1))  
+        target_ids_flat = target_ids.view(-1)  
+        loss_mask_flat = loss_mask.view(-1)  
+    
+        # Apply loss mask  
+        logits_selected = logits_flat[loss_mask_flat]  
+        target_ids_selected = target_ids_flat[loss_mask_flat]  
+    
+        # Compute loss  
+        loss_fct = nn.CrossEntropyLoss(ignore_index=self.small_tokenizer.pad_token_id)  
+        loss = loss_fct(logits_selected, target_ids_selected) 
+        return loss
+  
+    
+    def get_query_vector(self, input_ids: torch.Tensor, attention_mask: torch.Tensor):
+        model_in_eval_mode = not self.training
+        device = input_ids.device
+        with torch.no_grad():  
+            small_output = self.small_model(  
+                input_ids=input_ids,  
+                attention_mask=attention_mask,  
+                output_hidden_states=True,  
+                use_cache=False,
+                # position_ids=position_ids
+            )  
+        small_last_hidden = self._get_last_hidden_state(small_output)  # [batch_size, hidden_size]  
+        return small_last_hidden
+    
     
     def generate_text(  
         self,  
@@ -527,25 +503,17 @@ class DualModelTransformer(nn.Module):
         Returns:  
             str: Generated text as a string.  
         """  
+        self.small_model.eval()  
         with torch.no_grad():  
             # Obtain the knowledge vector from the large model  
             # Get embeddings of the input tokens  
-            model = self.small_model
             embedding_layer = self.embedding_layer
-            model.eval()  
+            
             device = input_ids.device  
-            input_embeds = embedding_layer(input_ids)  
-            position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long, device=device).unsqueeze(0).repeat(input_ids.size(0), 1)  
+            # input_embeds = embedding_layer(input_ids)  
+            # position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long, device=device).unsqueeze(0).repeat(input_ids.size(0), 1)  
     
-            # Pass through the small model to get the last hidden state  
-            small_output = self.small_model(  
-                inputs_embeds=input_embeds,  
-                attention_mask=attention_mask,  
-                position_ids=position_ids,
-                output_hidden_states=True,  
-                use_cache=False  # Not using cache here  
-            )  
-            small_last_hidden = self._get_last_hidden_state(small_output)[:, -1, :]  
+            small_last_hidden = self.get_query_vector(input_ids, attention_mask)
     
             # Transform and pass through the large model  
             large_input = self.ffn_small_to_large(small_last_hidden).unsqueeze(1)  
@@ -555,7 +523,7 @@ class DualModelTransformer(nn.Module):
                 output_hidden_states=True,
                 position_ids=large_position_ids,
             )  
-            large_last_hidden = self._get_last_hidden_state(large_output)[:, -1, :]  
+            large_last_hidden = self._get_last_hidden_state(large_output)  
             knowledge_vector = self.ffn_large_to_small(large_last_hidden)  
     
             # Scale the knowledge vector  
@@ -821,14 +789,14 @@ class DualModelTransformer(nn.Module):
                 output_hidden_states=True,  
                 use_cache=False  
             )  
-            small_last_hidden = self._get_last_hidden_state(small_output)[:, -1, :]  # [batch_size, hidden_size]  
+            small_last_hidden = self._get_last_hidden_state(small_output)  # [batch_size, hidden_size]  
             # Get knowledge_vector from large model  
             large_input = self.ffn_small_to_large(small_last_hidden).unsqueeze(1)  # [batch_size, 1, large_hidden_size]  
             large_output = self.large_model(  
                 inputs_embeds=large_input,  
                 output_hidden_states=True  
             )  
-            large_last_hidden = self._get_last_hidden_state(large_output)[:, -1, :]  # [batch_size, large_hidden_size]  
+            large_last_hidden = self._get_last_hidden_state(large_output)  # [batch_size, large_hidden_size]  
         knowledge_vector = self.ffn_large_to_small(large_last_hidden)  # [batch_size, hidden_size]  
         # Modify the embedding of the last token with the knowledge vector  
         input_embeds_prompt[:, -1, :] = input_embeds_prompt[:, -1, :] * (1 - alpha) + knowledge_vector * alpha  
@@ -968,25 +936,19 @@ class DualModelTransformer(nn.Module):
         # Get embeddings  
         embedding_layer = self.embedding_layer  
         input_embeds = embedding_layer(input_ids)  # [batch_size, seq_len_total, hidden_size]  
+        device = input_ids.device
     
         # Under no_grad, get knowledge_vector  
-        with torch.no_grad():  
-            # Pass input_prompt_ids through small_model to get small_last_hidden  
-            small_output = self.small_model(  
-                input_ids=input_prompt_ids,  
-                attention_mask=attention_mask_prompt,  
-                output_hidden_states=True,  
-                use_cache=False  
-            )  
-            small_last_hidden = self._get_last_hidden_state(small_output)[:, -1, :]  # [batch_size, hidden_size]  
-    
+        small_last_hidden = self.get_query_vector(input_prompt_ids, attention_mask_prompt)
         # Get knowledge_vector from large model  
-        large_input = self.ffn_small_to_large(small_last_hidden).unsqueeze(1)  # [batch_size, 1, large_hidden_size]  
+        large_input = self.ffn_small_to_large(small_last_hidden).unsqueeze(1)  # [batch_size, 1, large_hidden_size] 
+        large_position_ids = torch.arange(0, large_input.size(1), dtype=torch.long, device=device).unsqueeze(0).repeat(large_input.size(0), 1)   
         large_output = self.large_model(  
             inputs_embeds=large_input,  
-            output_hidden_states=True  
+            output_hidden_states=True,
+            position_ids=large_position_ids
         )  
-        large_last_hidden = self._get_last_hidden_state(large_output)[:, -1, :]  # [batch_size, large_hidden_size]  
+        large_last_hidden = self._get_last_hidden_state(large_output)  # [batch_size, large_hidden_size]  
         knowledge_vector = self.ffn_large_to_small(large_last_hidden)  # [batch_size, hidden_size]  
     
         # Insert the knowledge_vector as a new token at the end of the input_prompt_ids embeddings  
@@ -1003,12 +965,14 @@ class DualModelTransformer(nn.Module):
     
         seq_len_total = input_embeds.size(1)  
     
+        position_ids = torch.arange(0, input_embeds.size(1), dtype=torch.long, device=device).unsqueeze(0).repeat(input_embeds.size(0), 1)  
         # Pass through the small model  
         outputs = self.small_model(  
             inputs_embeds=input_embeds,  
             attention_mask=attention_mask,  
             use_cache=False,  
-            output_hidden_states=False  
+            output_hidden_states=False,
+            position_ids=position_ids
         )  
     
         logits = self._get_logits(outputs)  # [batch_size, seq_len_total, vocab_size]  
@@ -1053,7 +1017,8 @@ def save_model_temp(model, path):
 
 def save_model(model, path):  
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)  
-    torch.distributed.barrier()  
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()  
     if dist.get_rank() == 0:  
         logger.info("Entering state_dict_type context manager for saving model.")  
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):  

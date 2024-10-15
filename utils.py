@@ -44,7 +44,7 @@ def set_seed(seed):
     
     
 # Model definition function  
-def create_model(config, model_cls, fsdp_config, **kwargs):  
+def create_model(config, model_cls, fsdp_config, saved_model_path=None, **kwargs):  
     return model_cls(  
         config["large_model_name"],  
         config["small_model_name"],  
@@ -54,5 +54,6 @@ def create_model(config, model_cls, fsdp_config, **kwargs):
         max(config["max_input_length"], config["max_output_length"]),  
         fsdp_config,
         enable_checkpointing=True,
+        saved_model_path=saved_model_path,
         **kwargs
     )  

@@ -603,9 +603,13 @@ def get_dataset_class(dataset_name):
         'fill_the_blank': FillTheBlankDataset,
         'complete_the_sentence': CompleteTheSentenceDataset,
         'pretraining': create_pretraining_dataset,
+        'lighteval/mmlu': get_dataset,
+        'TIGER-Lab/MMLU-Pro': get_dataset,
+        'TIGER-Lab/MMLU-Pro-COT': get_dataset,
+        "FinanceMTEB/financial_phrasebank": get_dataset,
         # Add other datasets here  
     }  
-    return dataset_classes.get(dataset_name.lower())  
+    return dataset_classes.get(dataset_name, get_dataset)  
 
 class FillTheBlankDataset(BaseDataset):  
     def load_data(self):  
@@ -1632,7 +1636,28 @@ def get_validation_split(dataset_name):
         'fill_the_blank': 'test',
         'complete_the_sentence': 'test',
         'pretraining': 'test',
+        "TIGER-Lab/MMLU-Pro": "test",
+        "TIGER-Lab/MMLU-Pro-COT": "test",
+        "lighteval/mmlu": "test",
+        "FinanceMTEB/financial_phrasebank": "test",
         # Add other datasets here
     }
-    return validation_splits.get(dataset_name.lower())
+    return validation_splits.get(dataset_name, "test")
+
+def get_max_output_length(dataset_name):
+    max_output_lengths = {
+        'gsm8k': 128,
+        'mlqa': 10,
+        'squad': 10,
+        'mmlu': 10,
+        'xnli': 10,
+        'fill_the_blank': 10,
+        'complete_the_sentence': 10,
+        "TIGER-Lab/MMLU-Pro": 2,
+        "TIGER-Lab/MMLU-Pro-COT": 128,
+        "lighteval/mmlu": 8,
+        "pretraining": 512,
+        "FinanceMTEB/financial_phrasebank": 10,
+    }
+    return max_output_lengths.get(dataset_name, 8)
   

@@ -1,7 +1,14 @@
 import os
+import pprint
+import sys
 
+from model_fsdp_better_query import DualModelTransformerBetterQuery
+from model_fsdp_distrib import DualModelTransformerDistrib
+pp = pprint.PrettyPrinter(indent=4)
+import json
+from model_fsdp_better_supervision import DualModelTransformerBetterSupervision
 from model_strong_baselines import OneModelTransformer
-from my_datasets import get_validation_split  
+from my_datasets import get_max_output_length, get_validation_split  
 os.environ["TOKENIZERS_PARALLELISM"] = "true"  
 os.environ["OMP_NUM_THREADS"] = "2"
 os.environ["HF_TOKEN"] = "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"
@@ -50,30 +57,38 @@ logger = logging.getLogger(__name__)
 
 
 config = {  
-    "large_model_name": "unsloth/Meta-Llama-3.1-8B-Instruct",  # "EleutherAI/pythia-1b-deduped",  
-    "small_model_name": "meta-llama/Llama-3.2-1B-Instruct",  # "EleutherAI/pythia-410m",  
+    "large_model_name": "meta-llama/Llama-3.2-3B",  # "EleutherAI/pythia-1b-deduped",  
+    "small_model_name": "meta-llama/Llama-3.2-1B",  # "EleutherAI/pythia-410m",  
     "stop_tokens": [], # [".", "!", "?"],  
     "small_model_dim": 2048,  
-    "large_model_dim": 4096,  
-    "learning_rate": 2e-5,  
+    "large_model_dim": 3072,  
+    "learning_rate":1e-4,  
     "batch_size": 16,  
-    "num_epochs": 2,  
-    "warmup_steps": 100,  
+    "num_epochs": 1,  
+    "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
-    "train_subset_size": None,  # Set to None to use full dataset  
-    "test_subset_size": 16*16,    # Set to None to use full dataset  
+    "train_subset_size": 64,  # Set to None to use full dataset  
+    "test_subset_size": 4,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
-    "gradient_accumulation_steps": 1,  
+    "gradient_accumulation_steps": 1,  # Do not touch this.
     "num_workers": 4,  
     "max_input_length": 512,  
     "max_output_length": 512,
     "scheduler": "OneCycleLR",  # Options: "OneCycleLR", "CosineAnnealingLR", "StepLR", "MultiStepLR", "WarmupScheduler"  
-    "dataset_name": "pretraining",  # Specify the dataset to use  # complete_the_sentence # fill_the_blank
+    "dataset_name": "pretraining",  # Specify the dataset to use  # complete_the_sentence # fill_the_blank # lighteval/mmlu # gsm8k
     "seed": 42,  
-    "model_cls": LoRAModelTransformer,
+    "model_cls": DualModelTransformerBetterQuery, # DualModelTransformerBetterSupervision # DualModelTransformerDistrib # DualModelTransformer # LoRAModelTransformer # OneModelTransformer
+    "save_every_epoch": True,
     
 }  
-  
+
+config["max_output_length"] = get_max_output_length(config["dataset_name"])
+config["additional_save_keywords"] = "base_model"
+
+saved_model_path = None # f"saved_models/epoch_0_model_pretraining_{config["model_cls"].__name__}.pth"
+# saved_model_path = f"saved_models/final_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth"
+# saved_model_path = f"saved_models/final_model_pretraining_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth"
+config["saved_model_path"] = saved_model_path
 set_seed(config["seed"])  
   
 # Data processing function  
@@ -178,11 +193,30 @@ def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):
             else:  
                 raise ValueError(f"Invalid type for generated in evaluate: {type(generated)}")  
   
+            input_texts = tokenizer.batch_decode(batch['input_ids'], skip_special_tokens=True)
             label_texts = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)  
   
             # Extract answers from generated and label texts  
+            # label_texts = batch.get('reference_answer', label_texts)
+            reference_answers = batch.get('reference_answer', None)
+            
             predicted_answers = [dataset.extract_answer(text) for text in generated_texts]  
-            actual_answers = [dataset.extract_answer(ref.lower()) for ref in batch.get('reference_answer', label_texts)]  
+            actual_answers = [dataset.extract_answer(ref.lower()) for ref in label_texts]  
+            
+            
+            # print(json.dumps([
+            #     {
+            #         'input_text': input_text,
+            #         'generated_text': gen,
+            #         'label_text': label,
+            #         'predicted_answer': pred,
+            #         'actual_answer': actual,
+            #         'reference_answer': ref
+            #     }
+            #     for gen, label, pred, actual, ref, input_text in zip(generated_texts, label_texts, predicted_answers, actual_answers, reference_answers, input_texts)
+            # ], indent=2), flush=True)
+            # print(flush=True)  # Add an extra newline for better readability
+            # sys.stdout.flush()
   
             # Evaluate metrics  
             for name, func in metric_functions.items():  
@@ -221,7 +255,7 @@ def main():
         # use_orig_params=True,  
         fsdp_config['use_orig_params'] = True
         fsdp_config['auto_wrap_policy'] = None
-        model = create_model(config, model_cls=config["model_cls"], fsdp_config=fsdp_config, lora_fsdp_config=lora_fsdp_config) 
+        model = create_model(config, model_cls=config["model_cls"], fsdp_config=fsdp_config, lora_fsdp_config=lora_fsdp_config, saved_model_path=saved_model_path) 
         fsdp_config['auto_wrap_policy'] = None  
         model = FSDP(model, **fsdp_config)  
          
@@ -229,7 +263,7 @@ def main():
     else:
         fsdp_config = setup_fsdp()  
         fsdp_config['auto_wrap_policy'] = None  
-        model = create_model(config, model_cls=config["model_cls"], fsdp_config=fsdp_config)  
+        model = create_model(config, model_cls=config["model_cls"], fsdp_config=fsdp_config, saved_model_path=saved_model_path)  
         model = FSDP(model, **fsdp_config)  
     # fsdp_config["use_orig_params"] = True
     
@@ -256,6 +290,11 @@ def main():
     # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}, Large Baseline Train Loss: {train_loss_eval:.4f}, Large Baseline Train Metrics: {train_metrics}")
     # print(f"Large Baseline Test Loss: {test_loss:.4f}, Large Baseline Test Metrics: {test_metrics}")
     
+    # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="ours")  
+    # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="baseline")  
+    # print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}, Baseline Train Loss: {train_loss_eval:.4f}, Baseline Train Metrics: {train_metrics}")
+    # print(f"Baseline Test Loss: {test_loss:.4f}, Baseline Test Metrics: {test_metrics}")
+    
   
     
     
@@ -273,7 +312,7 @@ def main():
             pct_start=0.2  
         )  
     elif config["scheduler"] == "CosineAnnealingLR":  
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["num_epochs"], eta_min=0, last_epoch=-1, verbose=False)  
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["num_epochs"]*len(train_loader) // config["gradient_accumulation_steps"], eta_min=0, last_epoch=-1, verbose=False)  
     elif config["scheduler"] == "StepLR":  
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  
     elif config["scheduler"] == "MultiStepLR":  
@@ -295,13 +334,13 @@ def main():
     for epoch in range(config["num_epochs"]):  
         train_loss = train_epoch(model, epoch, train_loader, optimizer, scheduler, config)  
         test_loss, test_metrics = 0, dict(accuracy=0)
-        # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="test")  
+        test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="test")  
         # train_loss_eval, train_metrics = evaluate(model, train_loader, tokenizer, train_dataset, config, mode="train")  
         torch.distributed.barrier()  
   
         if dist.get_rank() == 0:  
             logger.info(f"Epoch {epoch+1}/{config['num_epochs']}:")  
-            # logger.info(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}, Train Metrics: {train_metrics}")
+            # logger.info(f"Train Loss: {train_loss_eval:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}, Train Metrics: {train_metrics}")
             logger.info(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Test Metrics: {test_metrics}")
   
             writer.add_scalar('Loss/train', train_loss, epoch)  
@@ -325,17 +364,19 @@ def main():
         if test_metrics[primary_metric] > best_metric and epoch > 0:  
             best_metric = test_metrics[primary_metric]  
             logger.info(f"Saving best model for rank: {dist.get_rank()}")
-            save_model(model, f"best_dual_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")  
+            save_model(model, f"saved_models/best_dual_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth")  
         torch.distributed.barrier()  
-        logger.info(f"Proceeding to save final model on rank: {dist.get_rank()}")
         
-        save_model(model, f"epoch_{epoch}_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")
-        
+        if config["save_every_epoch"]:
+            logger.info(f"Proceeding to save epoch model on rank: {dist.get_rank()}")
+            save_model(model, f"saved_models/epoch_{epoch}_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth")
+            logger.info(f"Done saving epoch model")
+
         if epoch == config["num_epochs"] - 1:  
             logger.info(f"Saving final model")
-            save_model(model, f"final_dual_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")  
+            save_model(model, f"saved_models/final_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth")  
         torch.distributed.barrier()  
-        logger.info(f"Done saving final model")
+        
   
     if dist.get_rank() == 0:  
         writer.close()  
@@ -344,22 +385,17 @@ def main():
     dist.destroy_process_group()  
     
 def main_non_fsdp():  
-    # Setup FSDP  
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Wrap the entire model with FSDP  
     if config["model_cls"] == LoRAModelTransformer:
         model = create_model(config, model_cls=config["model_cls"], fsdp_config=None) 
-         
         
     else:
         model = create_model(config, model_cls=config["model_cls"], fsdp_config=None)  
     # fsdp_config["use_orig_params"] = True
     model.to(device)
-    
-    
-  
     train_loader, test_loader, tokenizer, train_dataset, test_dataset = process_data(config)  
     
     # test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="baseline")  
@@ -434,20 +470,21 @@ def main_non_fsdp():
         if test_metrics[primary_metric] > best_metric and epoch > 0:  
             best_metric = test_metrics[primary_metric]  
             
-            save_model(model, f"best_dual_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")  
+            save_model(model, f"saved_models/best_dual_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth")  
         
         if torch.distributed.is_initialized():
             logger.info(f"Proceeding to save final model on rank: {dist.get_rank()}")
         
-        # save each epoch model
-        save_model(model, f"epoch_{epoch}_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")
-        
+        if config["save_every_epoch"]:
+            logger.info(f"Proceeding to save epoch model on rank: {dist.get_rank()}")
+            save_model(model, f"saved_models/epoch_{epoch}_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth")
+            logger.info(f"Done saving epoch model")
         if epoch == config["num_epochs"] - 1:  
             logger.info(f"Saving final model")
-            save_model(model, f"final_dual_model_{config['dataset_name']}_{config['model_cls'].__name__}.pth")  
+            save_model(model, f"saved_models/final_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth")
         if torch.distributed.is_initialized():
             torch.distributed.barrier()  
-        logger.info(f"Done saving final model")
+        
   
     
     writer.close()  

@@ -77,12 +77,14 @@ class LoRAModelTransformer(nn.Module):
         lora_param_count = calculate_lora_parameters(self.small_model)  
         print(f"Total number of LoRA parameters: {lora_param_count}, in millions: {(lora_param_count / 1e6):.2f}M") 
         for name, param in self.small_model.named_parameters():  
+            param.requires_grad = False
             if 'lora_' in name:  
                 param.requires_grad = True  
    
         
         # Enable gradient checkpointing  
         if enable_checkpointing:  
+            self.small_model.enable_input_require_grads()
             if hasattr(self.small_model, 'gradient_checkpointing_enable'):  
                 self.small_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})  
             else:  
@@ -96,6 +98,12 @@ class LoRAModelTransformer(nn.Module):
         #     if param.requires_grad:  
         #         print(f"Parameter {name} requires grad and has shape {param.shape}")  
 
+        saved_model_path = kwargs.get("saved_model_path")
+        device = next(iter(self.parameters())).device
+        if saved_model_path:
+            checkpoint = torch.load(saved_model_path, map_location=device)  
+            self.load_state_dict(checkpoint)  
+        
         self.small_model.base_model.enable_input_require_grads()
         if fsdp_config is not None:
             self.embedding_layer = FSDP(self.embedding_layer, **fsdp_config)

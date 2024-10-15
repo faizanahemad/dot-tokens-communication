@@ -67,6 +67,8 @@ class OneModelTransformer(nn.Module):
             nn.Linear(small_model_dim, small_model_dim, dtype=torch.bfloat16),
             nn.LayerNorm(small_model_dim, dtype=torch.bfloat16)
         )  
+        
+        self.modules_that_needs_grad = [self.ffn_small_to_large, self.ffn_large_to_small]
   
         # Initialize FFN parameters  
         self._init_weights(self.ffn_small_to_large)  
@@ -78,6 +80,7 @@ class OneModelTransformer(nn.Module):
         
         # Enable gradient checkpointing  
         if enable_checkpointing:  
+            self.small_model.enable_input_require_grads()
             if hasattr(self.small_model, 'gradient_checkpointing_enable'):  
                 self.small_model.gradient_checkpointing_enable()  
             else:  
@@ -85,6 +88,12 @@ class OneModelTransformer(nn.Module):
 
         
   
+        saved_model_path = kwargs.get("saved_model_path")
+        device = next(iter(self.parameters())).device
+        if saved_model_path:
+            checkpoint = torch.load(saved_model_path, map_location=device)  
+            self.load_state_dict(checkpoint)  
+        
         # Wrap components with FSDP if config is provided  
         if fsdp_config:  
             self.small_model = FSDP(self.small_model, **fsdp_config)  
@@ -606,15 +615,25 @@ class OneModelTransformer(nn.Module):
         loss_mask[:, :seq_len_prompt] = False  # Exclude the input_prompt from loss computation
         # Exclude padding tokens from loss computation
         loss_mask = loss_mask & (target_ids != self.small_tokenizer.pad_token_id)
-    
+        loss_mask[:, seq_len_prompt:seq_len_prompt+1] = True
+        # print(f"Number of tokens contributing to loss per sample: {loss_mask.sum(dim=1).tolist()}", flush=True)
         # Flatten logits, target_ids, and loss_mask  
         logits_flat = logits.view(-1, logits.size(-1))  
+        # Decode target_ids
+        decoded_targets = self.small_tokenizer.batch_decode(target_ids, skip_special_tokens=True)
+        # print("Decoded target sequences:\n" + "\n".join(f"Sample {i + 1}: {target}" for i, target in enumerate(decoded_targets)), flush=True)
+        
         target_ids_flat = target_ids.view(-1)  
         loss_mask_flat = loss_mask.view(-1)  
     
         # Apply loss mask  
         logits_selected = logits_flat[loss_mask_flat]  
         target_ids_selected = target_ids_flat[loss_mask_flat]  
+        # Decode and print target_ids_selected
+        decoded_selected_targets = self.small_tokenizer.decode(target_ids_selected, skip_special_tokens=True)
+        # print(f"Decoded selected targets: {decoded_selected_targets}", flush=True)
+        
+        # print(f"Actual target ids: {target_ids_selected}", flush=True)
     
         # Compute loss  
         loss_fct = nn.CrossEntropyLoss(ignore_index=self.small_tokenizer.pad_token_id)  

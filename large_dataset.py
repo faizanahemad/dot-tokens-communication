@@ -21,8 +21,7 @@ class BaseDataset(IterableDataset):
         self._max_output_length = max_output_length  
         self._split = split  
         self._subset_size = subset_size  
-        self._data = self.load_data()  
-        self._cached_data = self.preprocess_data()  
+        self._data = self.load_data()
         self._extra_kwargs = extra_kwargs
         self._num_rows = len(self._data)
         self._ex_iterable = None
@@ -179,19 +178,22 @@ class BaseDataset(IterableDataset):
     
 class ConfigurableDataset(BaseDataset):  
     def __init__(self, dataset_name, tokenizer_name, max_input_length, max_output_length, split, subset_size=None, use_cache=True, metrics=None, **extra_kwargs):  
+        self.dataset_name = dataset_name
         self.subset_name = extra_kwargs.get("subset_name", None)
         self.use_cache = use_cache  
         self.metrics = metrics or {}  # Store custom metrics  
-        super().__init__(dataset_name, tokenizer_name, max_input_length, max_output_length, split, subset_size, **extra_kwargs)  
+        
         self.extra_kwargs = extra_kwargs  
         self.instruction_column = extra_kwargs.get("instruction_column", None)  
         self.instruction = extra_kwargs.get("instruction", None)  
         assert self.instruction is not None or self.instruction_column is not None, "Either instruction or instruction_column must be provided"  
-        self.input_columns = extra_kwargs.get("input_columns", [])  
-        self.output_columns = extra_kwargs.get("output_columns", [])  
+        self.input_columns = extra_kwargs.get("input_columns")  
+        self.output_columns = extra_kwargs.get("output_columns")  
         self.answer_parser = extra_kwargs.get("answer_parser", lambda x: x.strip().lower())  
+        self.input_parser = extra_kwargs.get("input_parser", lambda x: " ".join([x[col][0] if isinstance(x[col], list) else str(x[col]) for col in self.input_columns]))
+        super().__init__(dataset_name, tokenizer_name, max_input_length, max_output_length, split, subset_size, **extra_kwargs)  
         
-        
+        self.extract_answer = lambda x: self.answer_parser(x).strip().lower().replace("Answer:", "").replace("answer:", "").strip()
         self.cached_data = None  
         if self.use_cache:  
             self.preprocess_data()  
@@ -211,9 +213,17 @@ class ConfigurableDataset(BaseDataset):
     
     def load_data(self):  
         dataset = load_dataset(self.dataset_name, "main" if self.subset_name is None else self.subset_name, trust_remote_code=True)  
+        tokenizer = self.tokenizer
+        max_input_length = self.max_input_length
+        max_output_length = self.max_output_length
         data = dataset[self.split]  
+        output_columns = self.output_columns
+        output_parser = lambda x: " ".join([str(x[col]) for col in output_columns])
+        input_columns = self.input_columns
+        input_parser = lambda x: " ".join([str(x[col]) for col in input_columns])
+        data = data.filter(lambda x: len(tokenizer.encode(input_parser(x))) <= max_input_length and len(tokenizer.encode(output_parser(x))) <= max_output_length)
         if self.subset_size:  
-            data = data.select(range(self.subset_size))  
+            data = data.shuffle(seed=42).select(range(min(self.subset_size, len(data))))  
         return data  
   
     def preprocess_data(self):  
@@ -268,19 +278,25 @@ class ConfigurableDataset(BaseDataset):
             'attention_mask': attention_mask,  
             'labels': labels,  
             'labels_attention_mask': labels_attention_mask,  
-            'reference_answer': parsed_reference_answer  
+            'reference_answer': parsed_reference_answer,
+            "prompt": prompt,  
+            "target": target,
+            "dataset_name": self.dataset_name,
         }  
   
     def construct_prompt(self, item):  
-        instruction = self.instruction if self.instruction else item[self.instruction_column]  
-        inputs = " ".join([str(item[col]) for col in self.input_columns])  
-        return f"{instruction}\n\n{inputs}\n\nAnswer:"  
+        instruction = self.instruction if self.instruction else (item[self.instruction_column]  if self.instruction_column else "")
+        instruction = f"{instruction}\n\n" if instruction.strip() != "" else ""
+        inputs = self.input_parser({col: item[col] for col in self.input_columns}).strip()
+        prompt = f"{instruction}{inputs}\nAnswer:\n"  
+        # print(prompt, flush=True)
+        return prompt
   
     def construct_target(self, item):  
-        return " ".join([str(item[col]) for col in self.output_columns])  
+        target = " ".join([item[col][0] if isinstance(item[col], list) else str(item[col]) for col in self.output_columns])  
+        # print(f"Target: {target}")
+        return target.strip().replace("Answer:", "").replace("answer:", "").strip()
   
-    def extract_answer(self, text):  
-        return self.answer_parser(text)  
   
     def _get_single_item(self, idx):  
         if self.use_cache and self.cached_data:  
@@ -371,7 +387,7 @@ def gsm8k_answer_parser(text):
     if pos == -1:  
         return None  
     answer = text[pos+4:].strip()  
-    return ''.join(answer.split()).lower()  
+    return ''.join(answer.split()).lower().strip().replace("Answer:", "").replace("answer:", "").strip()
 
 def reference_contained(predictions, references):  
     correct = 0  
@@ -393,7 +409,8 @@ def custom_target_constructor_for_gsm8k_reasoning(item):
     return f"{item['generation']}\n#### {item['short_answer']}"  
 
 def custom_target_constructor_for_lmsys_arena_human_preference_55k(item):
-    return f"{item['response_a'] if item['winner_model_a']==1 else item['response_b']}"
+    response = f"{item['response_a'] if item['winner_model_a']==1 else item['response_b']}"
+    return response.replace('["', "").replace('"]', "").strip()
 
 
 
@@ -404,45 +421,134 @@ def competition_math_answer_parser(text):
     # Find the content inside the \boxed{} command  
     boxed_match = re.search(r'\\boxed\{(.*?)\}', text)  
     if boxed_match:  
-        return boxed_match.group(1).strip()  
+        return boxed_match.group(1).strip().replace("Answer:", "").replace("answer:", "").strip()
     else:  
         # If no \boxed{} is found, return the last sentence as a fallback  
         sentences = text.split('.')  
-        return sentences[-1].strip()  
+        return sentences[-1].strip().replace("Answer:", "").replace("answer:", "").strip()
 
-math_instruction = """You are tasked with solving a complex mathematical problem from a competition. The problem is categorized by type (e.g., Algebra, Geometry, Number Theory) and has a specific difficulty level.  
-  
-Your approach should be as follows:  
-1. Read the problem statement carefully.  
-2. Identify the key information and the question being asked.  
-3. Consider the problem type to guide your solution strategy.  
-4. Break down the problem into smaller, manageable steps.  
-5. Apply relevant mathematical concepts and formulas.  
-6. Show your work clearly, explaining each step of your reasoning.  
-7. Double-check your calculations and logic.  
-8. Provide your final answer, ensuring it directly addresses the question asked.  
-  
-Important Instructions for Formatting Your Answer:  
-- Use proper mathematical notation throughout your solution.  
-- Your solution should be clear, concise, and logically structured.  
-- After your step-by-step solution, you MUST provide the final answer enclosed in a LaTeX \\boxed{} command.  
-- The \\boxed{} command should contain only the final numerical or algebraic result, without additional explanation.  
-  
-Example of how to format your final answer:  
-If your final answer is 42, you should write it as: \\boxed{42}  
-If your final answer is a fraction like 3/4, you should write it as: \\boxed{\\frac{3}{4}}  
-  
-Remember: Always enclose your final answer in the \\boxed{} command. This is crucial for the correct parsing and evaluation of your solution.  
-  
-Now, solve the following problem:  
-"""  
+math_instruction = """Solve this mathematical problem.
+Important:
+1. Think step by step and show your work, explaining each step.
+2. Provide the final answer in a LaTeX \\boxed{} command.
+3. Only put the final result in \\boxed{}, in LaTeX format. The \\boxed{} command should contain only the final numerical or algebraic result in latex format.
+
+Examples:
+\\boxed{42}
+\\boxed{\\frac{3}{4}}
+
+Solve the problem:
+"""
 def custom_prompt_constructor_math(item):  
-    return f"{math_instruction}\n\nProblem Type: {item['type']}\n\nProblem: {item['problem']}\n\nAnswer:"  
+    return f"{math_instruction}\nProblem Type: {item['type']}\nProblem: {item['problem']}\n"
 
 
     
     
-def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_length, split, subset_size=None):
+def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_length, split, subset_size=None, **extra_kwargs):
+    if dataset_name == "Rowan/hellaswag":
+        hellaswag_dataset = ConfigurableDataset(
+            dataset_name="Rowan/hellaswag",
+            tokenizer_name=tokenizer_name,
+            max_input_length=max_input_length,
+            max_output_length=max_output_length,
+            split="train",
+            subset_size=subset_size,
+            instruction="Choose the correct ending for the given context and situation.",
+            input_columns=["activity_label", "ctx", "endings"],
+            output_columns=["label"],
+            input_parser=lambda x: x["activity_label"] + "\n" + x["ctx"] + "\n" + "\nPossible Endings:\n" + "\n".join([f"{i}. {ending}" for i, ending in enumerate(x["endings"])]),
+            answer_parser=lambda x: x.strip().lower(),
+            use_cache=False,
+            subset_name="default",
+            metrics={'reference_contained': reference_contained}
+        )
+        
+        hellaswag_test_dataset = ConfigurableDataset(
+            dataset_name="Rowan/hellaswag",
+            tokenizer_name=tokenizer_name,
+            max_input_length=max_input_length,
+            max_output_length=max_output_length,
+            split="validation",
+            subset_size=subset_size,
+            instruction="Choose the correct ending for the given context and situation.",
+            input_columns=["activity_label", "ctx", "endings"],
+            output_columns=["label"],
+            input_parser=lambda x: x["activity_label"] + "\n" + x["ctx"] + "\n" + "\nPossible Endings:\n" + "\n".join([f"{i}. {ending}" for i, ending in enumerate(x["endings"])]),
+            answer_parser=lambda x: x.strip().lower(),
+            use_cache=False,
+            subset_name="default",
+            metrics={'reference_contained': reference_contained}
+        )
+        if split == "train":
+            return hellaswag_dataset
+        elif split == "test":
+            return hellaswag_test_dataset
+    
+    if dataset_name == "Isotonic/human_assistant_conversation":
+        isotonic_human_assistant_conversation_dataset = ConfigurableDataset(
+            dataset_name="Isotonic/human_assistant_conversation",
+            tokenizer_name=tokenizer_name,
+            max_input_length=max_input_length,
+            max_output_length=max_output_length,
+            split="train",
+            subset_size=subset_size,
+            instruction="",
+            input_columns=["prompt"],
+            output_columns=["response"],
+            input_parser=lambda x: x["prompt"].replace("Assistant:", "").replace("Output:", "").replace("Human: ", "").replace("User: ", "").strip(),
+            answer_parser=lambda x: x.strip().lower(),
+            use_cache=False,
+            subset_name="default",
+            metrics={'reference_contained': reference_contained}
+        )
+        if split == "train":
+            return isotonic_human_assistant_conversation_dataset
+        elif split == "test":
+            raise ValueError("No test split available for this dataset")
+    
+    if dataset_name == "flammenai/casual-conversation-DPO":
+        casual_conversation_dpo_dataset = ConfigurableDataset(
+            dataset_name="flammenai/casual-conversation-DPO",
+            tokenizer_name=tokenizer_name,
+            max_input_length=max_input_length,
+            max_output_length=max_output_length,
+            split="train",
+            subset_size=subset_size,
+            instruction="",
+            input_columns=["prompt"],
+            output_columns=["chosen"],
+            answer_parser=lambda x: x.strip().lower(),
+            use_cache=False,
+            subset_name="default",
+            metrics={'reference_contained': reference_contained}
+        )
+        if split == "train":
+            return casual_conversation_dpo_dataset
+        elif split == "test":
+            raise ValueError("No test split available for this dataset")
+        
+    if dataset_name == "flammenai/casual-conversation-DPO-rejected":
+        casual_conversation_dpo_dataset = ConfigurableDataset(
+            dataset_name="flammenai/casual-conversation-DPO",
+            tokenizer_name=tokenizer_name,
+            max_input_length=max_input_length,
+            max_output_length=max_output_length,
+            split="train",
+            subset_size=subset_size,
+            instruction="",
+            input_columns=["prompt"],
+            output_columns=["rejected"],
+            answer_parser=lambda x: x.strip().lower(),
+            use_cache=False,
+            subset_name="default",
+            metrics={'reference_contained': reference_contained}
+        )
+        if split == "train":
+            return casual_conversation_dpo_dataset
+        elif split == "test":
+            raise ValueError("No test split available for this dataset")
+    
     if dataset_name == "hendrycks/competition_math":
         math_train_dataset = ConfigurableDataset(  
             dataset_name="hendrycks/competition_math",  
@@ -454,6 +560,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             instruction=math_instruction,  
             input_columns=["problem", "type"],  
             output_columns=["solution"],  
+            input_parser=custom_prompt_constructor_math,
             answer_parser=competition_math_answer_parser,  
             use_cache=False,  
             subset_name="default",  
@@ -470,17 +577,13 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             instruction=math_instruction,  
             input_columns=["problem", "type"],  
             output_columns=["solution"],  
+            input_parser=custom_prompt_constructor_math,
             answer_parser=competition_math_answer_parser,  
             use_cache=False,  
             subset_name="default",  
             metrics={'reference_contained': reference_contained}  
         )  
-
-
-        
-        
-        math_train_dataset.construct_prompt = custom_prompt_constructor_math  
-        math_test_dataset.construct_prompt = custom_prompt_constructor_math  
+ 
         
         if split == "train":
             return math_train_dataset
@@ -534,7 +637,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_input_length=max_input_length,  
             max_output_length=max_output_length,  
             split="train",  # Only 'train' split is available in this dataset  
-            subset_size=None,  # Set this to a number if you want to use only a subset of the data  
+            subset_size=subset_size,    # Set this to a number if you want to use only a subset of the data  
             instruction_column="system_prompt",  
             input_columns=["question"],  
             output_columns=["generation", "short_answer"],  
@@ -558,7 +661,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_input_length=max_input_length,  
             max_output_length=max_output_length,  
             split="train",  # Assuming 'train' split is available, adjust if needed  
-            subset_size=None,  # Set this to a number if you want to use only a subset of the data  
+            subset_size=subset_size,    # Set this to a number if you want to use only a subset of the data  
             instruction="Solve the following math problem step by step. Show your work and provide the final answer after '#### '.",  
             input_columns=["question"],  
             output_columns=["answer"],  
@@ -574,7 +677,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_input_length=max_input_length,  
             max_output_length=max_output_length,  
             split="test",  # Assuming 'train' split is available, adjust if needed  
-            subset_size=None,  # Set this to a number if you want to use only a subset of the data  
+            subset_size=subset_size,    # Set this to a number if you want to use only a subset of the data  
             instruction="Solve the following math problem step by step. Show your work and provide the final answer after '#### '.",  
             input_columns=["question"],  
             output_columns=["answer"],  
@@ -615,9 +718,10 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["prompt"],
             output_columns=["response_a", "response_b"],
+            input_parser=lambda x: x["prompt"].replace('["', "").replace('"]', "").strip(),
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="default",
@@ -637,10 +741,11 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["prompt"],
             output_columns=["response"],
             answer_parser=lambda x: x.strip().lower(),
+            input_parser=lambda x: x["prompt"].replace("Below is an instruction that describes a task. Write a response that appropriately completes the request. ### Instruction:", "").replace("### Response:", "").replace("Human: ", "").replace("User: ", "").strip(),
             use_cache=False,
             subset_name="default",
             metrics={'reference_contained': reference_contained}
@@ -658,7 +763,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="eval",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["instruction"],
             output_columns=["output"],
             answer_parser=lambda x: x.strip().lower(),
@@ -679,7 +784,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["instruction"],
             output_columns=["output"],
             answer_parser=lambda x: x.strip().lower(),
@@ -700,7 +805,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["instruction"],
             output_columns=["output"],
             answer_parser=lambda x: x.strip().lower(),
@@ -721,7 +826,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["instruction", "input"],
             output_columns=["output"],
             answer_parser=lambda x: x.strip().lower(),
@@ -742,9 +847,10 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="auxiliary_train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following multiple choice question and choose the answer correctly from the given options. Choose the most appropriate answer from the given options. Output the answer as a single letter. There might be 4 options (A, B, C, or D) or 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J).",
+            instruction="Choose the answer correctly from the given options. Output the answer as a single number. There are 4 options (0, 1, 2, or 3).",
             input_columns=["question", "choices"],
             output_columns=["answer"],
+            input_parser=lambda x: f"{x['question']}\nOptions:\n0. {x['choices'][0]}\n1. {x['choices'][1]}\n2. {x['choices'][2]}\n3. {x['choices'][3]}",
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="all",
@@ -758,9 +864,10 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="test",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following multiple choice question and choose the answer correctly from the given options. Choose the most appropriate answer from the given options. Output the answer as a single letter. There might be 4 options (A, B, C, or D) or 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J).",
+            instruction="Choose the answer correctly from the given options. Output the answer as a single number. There are 4 options (0, 1, 2, or 3).",
             input_columns=["question", "choices"],
             output_columns=["answer"],
+            input_parser=lambda x: f"{x['question']}\nOptions:\n0. {x['choices'][0]}\n1. {x['choices'][1]}\n2. {x['choices'][2]}\n3. {x['choices'][3]}",
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="all",
@@ -779,7 +886,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["prompt"],
             output_columns=["chosen"],
             answer_parser=lambda x: x.strip().lower(),
@@ -821,7 +928,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["instruction"],
             output_columns=["chosen_response"],
             answer_parser=lambda x: x.strip().lower(),
@@ -842,7 +949,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["src"],
             output_columns=["tgt_chosen"],
             answer_parser=lambda x: x.strip().lower(),
@@ -863,7 +970,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["instruction"],
             output_columns=["response"],
             answer_parser=lambda x: x.strip().lower(),
@@ -884,16 +991,17 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["conversations"],
             output_columns=["conversations"],
+            input_parser=lambda sample: "\n".join([f"{conv['value']}\n" if conv['from'] == 'human' else f"Answer:\n{conv['value']}\n\n" for conv in sample['conversations'][:-1]]),
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="default",
             metrics={'reference_contained': reference_contained}
         )
         arcee_ai_evolkit_20k_dataset.construct_target = lambda sample: sample['conversations'][-1]['value']
-        arcee_ai_evolkit_20k_dataset.construct_prompt = lambda sample: "\n".join([f"Human:\n{conv['value']}\n\nAssistant:\n" if conv['from'] == 'human' else f"Assistant:\n{conv['value']}\n\n" for conv in sample['conversations'][:-1]])
+        
         if split == "train":
             return arcee_ai_evolkit_20k_dataset
         elif split == "test":
@@ -907,23 +1015,22 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question. Provide your answer in a concise manner.",
+            instruction="",
             input_columns=["conversations"],
             output_columns=["conversations"],
+            input_parser=lambda sample: "\n".join([f"{conv['value']}\n" if conv['from'] == 'human' else f"Answer:\n{conv['value']}\n\n" for conv in sample['conversations'][:-1]]),
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="default",
             metrics={'reference_contained': reference_contained}
         )
-        wizardlmteam_wizardlm_evol_instruct_v2_196k_dataset.construct_target = lambda sample: sample['conversations'][-1]['value']
-        wizardlmteam_wizardlm_evol_instruct_v2_196k_dataset.construct_prompt = lambda sample: "\n".join([f"Human:\n{conv['value']}\n\nAssistant:\n" if conv['from'] == 'human' else f"Assistant:\n{conv['value']}\n\n" for conv in sample['conversations'][:-1]])   
+        wizardlmteam_wizardlm_evol_instruct_v2_196k_dataset.construct_target = lambda sample: sample['conversations'][-1]['value'] 
         if split == "train":
             return wizardlmteam_wizardlm_evol_instruct_v2_196k_dataset
         elif split == "test":
             raise ValueError("No test split available for this dataset")
         
     if dataset_name == "TIGER-Lab/MMLU-Pro":
-        
         tiger_lab_mmlu_pro_test_dataset = ConfigurableDataset(
             dataset_name="TIGER-Lab/MMLU-Pro",
             tokenizer_name=tokenizer_name,
@@ -931,9 +1038,10 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="test",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following multiple choice question and choose the answer correctly from the given options. Choose the most appropriate answer from the given options. Output the answer as a single letter. There might be 4 options (A, B, C, or D) or 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J).",
+            instruction="Choose the most appropriate answer from the given options. Output the answer as a single letter. There could be upto 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J).",
             input_columns=["question", "options"],
             output_columns=["answer"],
+            input_parser=lambda x: f"{x['question']}\nOptions:\n" + "\n".join([f"{chr(65+i)}. {choice}" for i, choice in enumerate(x['options'])]),
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="default",
@@ -947,9 +1055,10 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
                 max_output_length=max_output_length,
                 split="validation",
                 subset_size=subset_size,
-                instruction="You are a helpful assistant. Answer the following multiple choice question and choose the answer correctly from the given options. Choose the most appropriate answer from the given options. Output the answer as a single letter. There might be 4 options (A, B, C, or D) or 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J).",
+                instruction="Choose the most appropriate answer from the given options. Output the answer as a single letter. There could be upto 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J).",
                 input_columns=["question", "options"],
                 output_columns=["answer"],
+                input_parser=lambda x: f"{x['question']}\nOptions:\n" + "\n".join([f"{chr(65+i)}. {choice}" for i, choice in enumerate(x['options'])]),
                 answer_parser=lambda x: x.strip().lower(),
                 use_cache=False,
                 subset_name="default",
@@ -968,10 +1077,11 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="test",
             subset_size=subset_size,
-            instruction="Answer the following multiple choice question by thinking step by step and choose the answer correctly from the given options. Choose the most appropriate answer from the given options after expressing your thoughts. Output the answer as a single letter. There might be 4 options (A, B, C, or D) or 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J). Your output should be in the following format: [YOUR THOUGHTS] <answer>[YOUR CHOICE]</answer>",
+            instruction="Answer the following multiple choice question by thinking step by step. Your reply should follow the format: [YOUR THOUGHTS] <answer>[YOUR CHOICE]</answer>. There might be upto 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J).",
             input_columns=["question", "options"],
             output_columns=["cot_content", "answer"],
             answer_parser=lambda x: x.split('<answer>')[-1].split('</answer>')[0].strip().lower() if '<answer>' in x and '</answer>' in x else x.strip().lower(),
+            input_parser=lambda x: f"{x['question']}\nOptions:\n" + "\n".join([f"{chr(65+i)}. {choice}" for i, choice in enumerate(x['options'])]),
             use_cache=False,
             subset_name="default",
             metrics={'reference_contained': reference_contained}
@@ -987,9 +1097,10 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
                 max_output_length=max_output_length,
                 split="validation",
                 subset_size=subset_size,
-                instruction="Answer the following multiple choice question by thinking step by step and choose the answer correctly from the given options. Choose the most appropriate answer from the given options after expressing your thoughts. Output the answer as a single letter. There might be 4 options (A, B, C, or D) or 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J). Your output should be in the following format: [YOUR THOUGHTS] <answer>[YOUR CHOICE]</answer>",
+                instruction="Answer the following multiple choice question by thinking step by step. Your reply should follow the format: [YOUR THOUGHTS] <answer>[YOUR CHOICE]</answer>. There might be upto 10 options from A to J, output the answer as a single letter (A, B, C, D, E, F, G, H, I, or J).",
                 input_columns=["question", "options"],
                 output_columns=["cot_content", "answer"],
+                input_parser=lambda x: f"{x['question']}\nOptions:\n" + "\n".join([f"{chr(65+i)}. {choice}" for i, choice in enumerate(x['options'])]),
                 answer_parser=lambda x: x.split('<answer>')[-1].split('</answer>')[0].strip().lower() if '<answer>' in x and '</answer>' in x else x.strip().lower(),
                 use_cache=False,
                 subset_name="default",
@@ -1012,6 +1123,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             input_columns=["problem", "type"],
             output_columns=["solution"],
             answer_parser=competition_math_answer_parser,
+            input_parser=custom_prompt_constructor_math,
             use_cache=False,
             subset_name="default",
             metrics={'reference_contained': reference_contained}
@@ -1027,12 +1139,11 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             input_columns=["problem", "type"],
             output_columns=["solution"],
             answer_parser=competition_math_answer_parser,
+            input_parser=custom_prompt_constructor_math,
             use_cache=False,
             subset_name="default",
             metrics={'reference_contained': reference_contained}
         )
-        lighteval_math_hard_dataset.construct_prompt = custom_prompt_constructor_math
-        lighteval_math_hard_test_dataset.construct_prompt = custom_prompt_constructor_math
         if split == "train":
             return lighteval_math_hard_dataset
         elif split == "test":
@@ -1046,9 +1157,10 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question by choosing the correct answer from the given options.",
+            instruction="",
             input_columns=["question", "choices"],
             output_columns=["answerKey"],
+            input_parser=lambda x: f"{x['question']}\nOptions:\n" + "\n".join([f"{label}. {text}" for label, text in zip(x['choices']['label'], x['choices']['text'])]),
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="default",
@@ -1060,11 +1172,12 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             tokenizer_name=tokenizer_name,
             max_input_length=max_input_length,
             max_output_length=max_output_length,
-            split="test",
+            split="validation",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following question by choosing the correct answer from the given options.",
+            instruction="",
             input_columns=["question", "choices"],
             output_columns=["answerKey"],
+            input_parser=lambda x: f"{x['question']}\nOptions:\n" + "\n".join([f"{label}. {text}" for label, text in zip(x['choices']['label'], x['choices']['text'])]),
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="default",
@@ -1083,7 +1196,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Fact check the following claim and then answer with true or false only.",
+            instruction="Fact check the following claim and then answer with true or false only.",
             input_columns=["claim"],
             output_columns=["label"],
             answer_parser=lambda x: x.strip().lower(),
@@ -1106,15 +1219,15 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="validation",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Answer the following multiple choice question and choose the answer correctly from the given options. Choose the most appropriate answer from the given options. Output the answer as a single letter. There will be 4 options (A, B, C, or D) of which only one is correct.",
+            instruction="Answer the following multiple choice question and choose the answer correctly from the given options. Output the answer as a single letter. There will be 4 options (A, B, C, or D) of which only one is correct.",
             input_columns=["question", "choices"],
             output_columns=["label"],
+            input_parser=lambda x: f"Question: {x['question']}\nChoices: {'\n'.join([f'{chr(65+i)}. {choice}' for i, choice in enumerate(x['choices'])])}",
             answer_parser=lambda x: x.strip().lower(),
             use_cache=False,
             subset_name="multiple_choice",
             metrics={'reference_contained': reference_contained}
         )
-        eleutherai_truthful_qa_mc_dataset.construct_prompt = lambda x: f"Question: {x['question']}\nChoices: {'\n'.join([f'{chr(65+i)}. {choice}' for i, choice in enumerate(x['choices'])])}\nAnswer:"
         if split == "train":
             raise ValueError("No train split available for this dataset")
         elif split == "test":
@@ -1128,7 +1241,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="train",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Classify the following financial phrase into one of the following categories: 'Positive', 'Negative', or 'Neutral'. Your output should be one of the following: positive, negative, or neutral.",
+            instruction="Classify the following financial phrase into one of the following categories: 'Positive', 'Negative', or 'Neutral'. Your output should be one of the following: positive, negative, or neutral.",
             input_columns=["text"],
             output_columns=["label_text"],
             answer_parser=lambda x: x.strip().lower(),
@@ -1144,7 +1257,7 @@ def get_dataset(dataset_name, tokenizer_name, max_input_length, max_output_lengt
             max_output_length=max_output_length,
             split="test",
             subset_size=subset_size,
-            instruction="You are a helpful assistant. Classify the following financial phrase into one of the following categories: 'Positive', 'Negative', or 'Neutral'. Your output should be one of the following: positive, negative, or neutral.",
+            instruction="Classify the following financial phrase into one of the following categories: 'Positive', 'Negative', or 'Neutral'. Your output should be one of the following: positive, negative, or neutral.",
             input_columns=["text"],
             output_columns=["label_text"],
             answer_parser=lambda x: x.strip().lower(),
@@ -1173,10 +1286,11 @@ class CombinedConfigurableDataset:
         - datasets (list): A list of ConfigurableDataset instances to combine.  
         """  
         self.datasets = datasets  
-        self.dataset_lengths = [len(ds) for ds in datasets]  
+        self.dataset_lengths = [len(ds) for ds in datasets if ds is not None]  
         self.cumulative_lengths = self._compute_cumulative_lengths()  
         self.total_length = sum(self.dataset_lengths)  
         self.tokenizer = datasets[0].tokenizer
+        self.extract_answer = lambda x: x.strip().lower()
         # Optionally, store other attributes or metadata if needed.  
       
     def _compute_cumulative_lengths(self):  
@@ -1252,6 +1366,15 @@ class CombinedConfigurableDataset:
         for dataset in self.datasets:  
             for item in dataset:  
                 yield item  
+                
+    def get_evaluation_metrics(self):  
+        def exact_match(predictions, references):  
+            correct = sum(pred == ref for pred, ref in zip(predictions, references) if pred is not None and ref is not None)  
+            total = sum(1 for pred, ref in zip(predictions, references) if pred is not None and ref is not None)  
+            return {'exact_match': correct / total if total > 0 else 0}  
+        
+        default_metrics = {'exact_match': exact_match}  
+        return default_metrics  
 
 def create_pretraining_dataset(  
     dataset_name,
@@ -1279,28 +1402,40 @@ def create_pretraining_dataset(
     if split == "train": 
         dataset_names = [  
             "hendrycks/competition_math",  
+            "Rowan/hellaswag",
             "gsm8k",  
-            "gsm8k-reasoning",  
-            "synthetic-gsm8k",  
+            # "flammenai/casual-conversation-DPO-rejected",
+            "flammenai/casual-conversation-DPO",
+            
+            "Isotonic/human_assistant_conversation",
+            # "gsm8k-reasoning",  
+            # "synthetic-gsm8k",  
             "argilla/distilabel-intel-orca-dpo-pairs",  
-            "lmsys/lmsys-arena-human-preference-55k",  
+           "lmsys/lmsys-arena-human-preference-55k",  
             "mosaicml/dolly_hhrlhf",  
             "tatsu-lab/alpaca_eval",  
             "Norquinal/claude_evol_instruct_100k",  
+            # "mlabonne/Evol-Instruct-Python-26k",
             "mlabonne/orpo-dpo-mix-40k-flat",  
-            "jondurbin/truthy-dpo-v0.1",  
+            # "jondurbin/truthy-dpo-v0.1",  
             "argilla/distilabel-math-preference-dpo",  
-            "facebook/Self-taught-evaluator-DPO-data",  
+            # "facebook/Self-taught-evaluator-DPO-data",  
             "argilla/magpie-ultra-v0.1",  
-            "arcee-ai/EvolKit-20k",  
-            "WizardLMTeam/WizardLM_evol_instruct_V2_196k",  
+            # "arcee-ai/EvolKit-20k",  
+            
+            # "WizardLMTeam/WizardLM_evol_instruct_V2_196k",  
+            "TIGER-Lab/MMLU-Pro",  
             "TIGER-Lab/MMLU-Pro",  
             "lighteval/MATH-Hard",  
             "tau/commonsense_qa",  
-            "FinanceMTEB/financial_phrasebank"  
+            "FinanceMTEB/financial_phrasebank",
+            "lighteval/mmlu",
+            "lighteval/mmlu",
+            # "TIGER-Lab/MMLU-Pro-COT"  
         ]  
     elif split == "test":
         dataset_names = [  
+            "Rowan/hellaswag",
             "hendrycks/competition_math",  
             "gsm8k",  
             "synthetic-gsm8k",  
@@ -1328,7 +1463,7 @@ def create_pretraining_dataset(
                 subset_size  
             )  
             datasets.append(dataset)  
-            print(f"Successfully added {dataset_name} to the pretraining dataset.")  
+            print(f"Successfully added {dataset_name} with length {len(dataset)} and subset size {subset_size} to the pretraining dataset.")  
         except Exception as e:  
             print(f"Error loading {dataset_name}: {str(e)}")  
       
