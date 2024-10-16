@@ -67,7 +67,7 @@ config = {
     "num_epochs": 1,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
-    "train_subset_size": 64,  # Set to None to use full dataset  
+    "train_subset_size": 8192,  # Set to None to use full dataset  
     "test_subset_size": 4,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
     "gradient_accumulation_steps": 1,  # Do not touch this.
@@ -134,6 +134,8 @@ def process_data(config):
 # Training function  
 def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):  
     model.train()  
+    model.large_model.eval()  
+    model.small_model.eval()  
     total_loss = 0  
     if torch.distributed.is_initialized():
         train_loader.sampler.set_epoch(epoch)  
@@ -163,6 +165,8 @@ def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):
 # Evaluation function  
 def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):  
     model.eval()  
+    model.large_model.eval()  
+    model.small_model.eval()  
     total_loss = 0  
     progress_bar = tqdm(data_loader, desc="Evaluating", disable= torch.distributed.is_initialized() and not dist.get_rank() == 0)  
     metric_functions = dataset.get_evaluation_metrics()  

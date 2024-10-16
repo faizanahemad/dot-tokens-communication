@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader  
 from transformers import AutoTokenizer  
 from model_fsdp import DualModelTransformer  
+from model_fsdp_better_query import DualModelTransformerBetterQuery
 from model_fsdp_better_supervision import DualModelTransformerBetterSupervision
 from model_fsdp_distrib import DualModelTransformerDistrib
 from model_strong_baselines import OneModelTransformer
@@ -25,8 +26,8 @@ config_test = {
     "batch_size": 16,  
     "test_subset_size": 512,  
     "max_input_length": 512,  
-    "dataset_name":  "amanrangapur/Fin-Fact", # "EleutherAI/truthful_qa_mc"  # "TIGER-Lab/MMLU-Pro" # "lighteval/MATH-Hard" # "tau/commonsense_qa" # "amanrangapur/Fin-Fact" # "FinanceMTEB/financial_phrasebank" # 
-    "model_cls": DualModelTransformerDistrib,
+    "dataset_name":  "gsm8k", # "EleutherAI/truthful_qa_mc"  # "TIGER-Lab/MMLU-Pro" # "lighteval/MATH-Hard" # "tau/commonsense_qa" # "amanrangapur/Fin-Fact" # "FinanceMTEB/financial_phrasebank" # 
+    "model_cls": DualModelTransformerBetterQuery,
 }  
 config_test["max_output_length"] = get_max_output_length(config_test["dataset_name"])
 config_test["baselines"] = True

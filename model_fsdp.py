@@ -133,7 +133,7 @@ class DualModelTransformer(nn.Module):
             # SwiGLU(small_model_dim),  
             nn.LayerNorm(small_model_dim, dtype=torch.bfloat16)
         )  
-        self.query_vector = nn.Embedding(1, small_model_dim)
+        self.query_vector = nn.Embedding(1, small_model_dim, dtype=torch.bfloat16)
   
         # Initialize FFN parameters  
         self._init_weights(self.ffn_small_to_large)  
@@ -190,6 +190,11 @@ class DualModelTransformer(nn.Module):
             self.small_tokenizer.pad_token = self.small_tokenizer.eos_token  
         if self.large_tokenizer.pad_token is None:  
             self.large_tokenizer.pad_token = self.large_tokenizer.eos_token  
+            
+        for param in self.large_model.parameters():  
+            param.requires_grad = False  
+        for param in self.small_model.parameters():  
+            param.requires_grad = False  
 
   
         
