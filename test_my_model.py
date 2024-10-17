@@ -22,16 +22,16 @@ logger = logging.getLogger(__name__)
 # Configuration  
 config_test = {  
     "large_model_name": "meta-llama/Llama-3.2-3B",  
-    "small_model_name": "meta-llama/Llama-3.2-1B",   
+    "small_model_name": "meta-llama/Llama-3.2-1B-Instruct",   
     "batch_size": 16,  
     "test_subset_size": 512,  
     "max_input_length": 512,  
-    "dataset_name":  "gsm8k", # "EleutherAI/truthful_qa_mc"  # "TIGER-Lab/MMLU-Pro" # "lighteval/MATH-Hard" # "tau/commonsense_qa" # "amanrangapur/Fin-Fact" # "FinanceMTEB/financial_phrasebank" # 
+    "dataset_name":  "tau/commonsense_qa", # # lighteval/mmlu "EleutherAI/truthful_qa_mc"  # "TIGER-Lab/MMLU-Pro" # "lighteval/MATH-Hard" # "tau/commonsense_qa" # "amanrangapur/Fin-Fact" # "FinanceMTEB/financial_phrasebank" # lighteval/mmlu
     "model_cls": DualModelTransformerBetterQuery,
 }  
 config_test["max_output_length"] = get_max_output_length(config_test["dataset_name"])
 config_test["baselines"] = True
-config["additional_save_keywords"] = "base_model"
+config["additional_save_keywords"] = "instruct_base_model"
 # saved_model_path = f'final_dual_model_gsm8k_{config["model_cls"].__name__}.pth'
 # saved_model_path = f"saved_models/epoch_0_model_pretraining_{config["model_cls"].__name__}.pth"
 # saved_model_path = f"saved_models/final_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}.pth"

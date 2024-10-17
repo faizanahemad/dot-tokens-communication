@@ -19,9 +19,9 @@ from torch.distributed.fsdp import (
 )  
 from torch.utils.tensorboard import SummaryWriter  
 from peft import LoraConfig, get_peft_model, LoraModel  
-
+from SamplingMixin import SamplingMixin
   
-class LoRAModelTransformer(nn.Module):  
+class LoRAModelTransformer(nn.Module, SamplingMixin):  
     """  
     A transformer-based model that combines a small language model with LoRA integration.  
   
@@ -336,6 +336,8 @@ class LoRAModelTransformer(nn.Module):
         # print(f"Loss requires_grad before backward: {loss.requires_grad}")  
         return loss  
     
+    
+    
     def generate_text(  
         self,  
         input_ids: torch.Tensor,  
@@ -413,13 +415,7 @@ class LoRAModelTransformer(nn.Module):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                if sampling_method == "greedy":  
-                    next_token = torch.argmax(logits, dim=-1)  
-                elif sampling_method == "sample":  
-                    probs = torch.nn.functional.softmax(logits / temperature, dim=-1)  
-                    next_token = torch.multinomial(probs, num_samples=1).squeeze(1)  
-                else:  
-                    raise ValueError("Invalid sampling method. Choose 'greedy' or 'sample'.")  
+                next_token = self._sampling(logits, sampling_method, temperature)
         
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  

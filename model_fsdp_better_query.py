@@ -5,6 +5,7 @@ from yarl import Query
 
 from model_fsdp import DualModelTransformer
 from model_fsdp_better_supervision import DualModelTransformerBetterSupervision
+from SamplingMixin import SamplingMixin
 # Set TOKENIZERS_PARALLELISM to true in environment variables
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 os.environ["OMP_NUM_THREADS"] = "2"
@@ -35,7 +36,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')  
 logger = logging.getLogger(__name__)  
 
-class DualModelTransformerBetterQuery(DualModelTransformerBetterSupervision):
+class DualModelTransformerBetterQuery(DualModelTransformerBetterSupervision, SamplingMixin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

@@ -14,12 +14,12 @@ import torch.nn.functional as F
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  
   
 # Load the tokenizer and model  
-tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-3.2-3B-Instruct')  
+tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-3.2-1B-Instruct')  
 tokenizer.padding_side = 'left'  
 print("Padding side:", tokenizer.padding_side)  
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
-model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-3.2-3B-Instruct')  
+model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-3.2-1B-Instruct')  
 model.to(device)  
   
 # Function to generate text from input  
@@ -32,7 +32,6 @@ def generate_text(input_text, max_length=50):
         input_ids,  
         max_length=max_length,  
         num_return_sequences=1,  
-        no_repeat_ngram_size=2,  
         early_stopping=True  
     )  
       
@@ -41,7 +40,7 @@ def generate_text(input_text, max_length=50):
     return generated_text  
   
 # Sample input text  
-input_text = "Once upon a time in a land far, far away"  
+input_text = "Tell me a joke."  
   
 # Generate text for the single input  
 generated_single = generate_text(input_text)  
@@ -66,7 +65,6 @@ def generate_text_batch(input_texts, max_length=50):
         attention_mask=inputs['attention_mask'],  
         max_length=max_length,  
         num_return_sequences=1,  
-        no_repeat_ngram_size=2,  
         early_stopping=True  
     )  
       

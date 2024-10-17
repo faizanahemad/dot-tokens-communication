@@ -1,6 +1,8 @@
 from cgitb import small
 import torch  
 import os
+
+from SamplingMixin import SamplingMixin
 # Set TOKENIZERS_PARALLELISM to true in environment variables
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 os.environ["OMP_NUM_THREADS"] = "2"
@@ -87,7 +89,7 @@ class FFN(nn.Module):
             return x + orig_x
 
   
-class DualModelTransformer(nn.Module):  
+class DualModelTransformer(nn.Module, SamplingMixin):  
     def __init__(  
         self,  
         large_model_name: str,  
@@ -421,17 +423,7 @@ class DualModelTransformer(nn.Module):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                if sampling_method == "greedy":  
-                    next_token = torch.argmax(logits, dim=-1)  
-                    if idx == 1:
-                        pass
-                        # print(logits[4:6, -128:-96])
-                        # print(next_token)
-                elif sampling_method == "sample":  
-                    probs = torch.nn.functional.softmax(logits / temperature, dim=-1)  
-                    next_token = torch.multinomial(probs, num_samples=1).squeeze(1)  
-                else:  
-                    raise ValueError("Invalid sampling method. Choose 'greedy' or 'sample'.")  
+                next_token = self._sampling(logits, sampling_method, temperature)
     
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
@@ -485,6 +477,7 @@ class DualModelTransformer(nn.Module):
             )  
         small_last_hidden = self._get_last_hidden_state(small_output)  # [batch_size, hidden_size]  
         return small_last_hidden
+    
     
     
     def generate_text(  
@@ -576,13 +569,7 @@ class DualModelTransformer(nn.Module):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                if sampling_method == "greedy":  
-                    next_token = torch.argmax(logits, dim=-1)  
-                elif sampling_method == "sample":  
-                    probs = torch.nn.functional.softmax(logits / temperature, dim=-1)  
-                    next_token = torch.multinomial(probs, num_samples=1).squeeze(1)  
-                else:  
-                    raise ValueError("Invalid sampling method. Choose 'greedy' or 'sample'.")  
+                next_token = self._sampling(logits, sampling_method, temperature)
         
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
@@ -1011,6 +998,25 @@ class DualModelTransformer(nn.Module):
         loss = loss_fct(logits_selected, target_ids_selected)  
     
         return loss  
+    
+    def load_state_dict(self, state_dict):
+        
+        current_state_dict = {}
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                current_state_dict[name] = param.data.clone()
+        for name, buffer in self.named_buffers():
+            current_state_dict[name] = buffer.clone()
+        # Update only the specific components
+        for key in current_state_dict.keys():
+            if any(component in key for component in ['query_vector', 'ffn_large_to_small', 'ffn_small_to_large']):
+                if key in state_dict:
+                    logger.info(f"Loading key {key} from state_dict")
+                    current_state_dict[key] = state_dict[key]
+                else:
+                    logger.warning(f"Key {key} not found in saved state dict. Keeping current model's state for this key.")
+        
+        super().load_state_dict(current_state_dict, strict=False)
 
 def save_model_temp(model, path):  
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)  
@@ -1021,6 +1027,7 @@ def save_model_temp(model, path):
         
 
 def save_model(model, path):  
+    # TODO: we only want to save query_vector, ffn_large_to_small, and ffn_small_to_large from the Model 
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)  
     if torch.distributed.is_initialized():
         torch.distributed.barrier()  
@@ -1038,6 +1045,37 @@ def save_model(model, path):
     torch.distributed.barrier()  
     if dist.get_rank() == 0:  
         logger.info("Completed save_model function.")  
+        
+def save_model_v2(model, path):
+    save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+    
+    if dist.get_rank() == 0:
+        logger.info("Entering state_dict_type context manager for saving model.")
+    
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
+        logger.info(f"Rank {dist.get_rank()} is calling model.state_dict()")
+        full_state_dict = model.state_dict()
+        logger.info(f"Rank {dist.get_rank()} has completed model.state_dict()")
+        
+        # Extract only the required components
+        components_to_save = {}
+        for key, value in full_state_dict.items():
+            if any(component in key for component in ['query_vector', 'ffn_large_to_small', 'ffn_small_to_large']):
+                components_to_save[key] = value
+    
+    torch.distributed.barrier()
+    
+    if dist.get_rank() == 0:
+        logger.info("Saving specific model components on rank 0.")
+        torch.save(components_to_save, path)
+        logger.info("Model components saved successfully.")
+    
+    torch.distributed.barrier()
+    
+    if dist.get_rank() == 0:
+        logger.info("Completed save_model function.")
 
   
 def load_model(model, path):  

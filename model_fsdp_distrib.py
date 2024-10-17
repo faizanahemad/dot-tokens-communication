@@ -11,6 +11,7 @@ import torch.nn as nn
 import copy
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM  
 from typing import List, Optional, Union, Tuple  
+from SamplingMixin import SamplingMixin
 import torch.nn.functional as F  
 from torch.distributed.fsdp import (  
     FullyShardedDataParallel as FSDP,  
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 large_loss_weight = 0.2
 small_loss_weight = 0.1
 
-class DualModelTransformerDistrib(DualModelTransformerBetterSupervision):
+class DualModelTransformerDistrib(DualModelTransformerBetterSupervision, SamplingMixin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
@@ -147,13 +148,7 @@ class DualModelTransformerDistrib(DualModelTransformerBetterSupervision):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                if sampling_method == "greedy":  
-                    next_token = torch.argmax(logits, dim=-1)  
-                elif sampling_method == "sample":  
-                    probs = torch.nn.functional.softmax(logits / temperature, dim=-1)  
-                    next_token = torch.multinomial(probs, num_samples=1).squeeze(1)  
-                else:  
-                    raise ValueError("Invalid sampling method. Choose 'greedy' or 'sample'.")  
+                next_token = self._sampling(logits, sampling_method, temperature)
         
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  

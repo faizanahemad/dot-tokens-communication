@@ -57,8 +57,8 @@ logger = logging.getLogger(__name__)
 
 
 config = {  
-    "large_model_name": "meta-llama/Llama-3.2-3B",  # "EleutherAI/pythia-1b-deduped",  
-    "small_model_name": "meta-llama/Llama-3.2-1B",  # "EleutherAI/pythia-410m",  
+    "large_model_name": "meta-llama/Llama-3.2-3B-Instruct",  # "EleutherAI/pythia-1b-deduped",  
+    "small_model_name": "meta-llama/Llama-3.2-1B-Instruct",  # "EleutherAI/pythia-410m",  
     "stop_tokens": [], # [".", "!", "?"],  
     "small_model_dim": 2048,  
     "large_model_dim": 3072,  
@@ -67,7 +67,7 @@ config = {
     "num_epochs": 1,  
     "warmup_steps": 10,  
     "max_grad_norm": 1.0,  
-    "train_subset_size": 8192,  # Set to None to use full dataset  
+    "train_subset_size": 4096,  # Set to None to use full dataset  
     "test_subset_size": 4,    # Set to None to use full dataset  
     "weight_decay": 0.001,  
     "gradient_accumulation_steps": 1,  # Do not touch this.
@@ -83,7 +83,7 @@ config = {
 }  
 
 config["max_output_length"] = get_max_output_length(config["dataset_name"])
-config["additional_save_keywords"] = "base_model"
+config["additional_save_keywords"] = "instruct_instruct_model"
 
 saved_model_path = None # f"saved_models/epoch_0_model_pretraining_{config["model_cls"].__name__}.pth"
 # saved_model_path = f"saved_models/final_model_{config['dataset_name'].replace('/', '_')}_{config['model_cls'].__name__}_{config['additional_save_keywords']}.pth"
@@ -134,8 +134,8 @@ def process_data(config):
 # Training function  
 def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):  
     model.train()  
-    model.large_model.eval()  
-    model.small_model.eval()  
+    # model.large_model.eval()  
+    # model.small_model.eval()  
     total_loss = 0  
     if torch.distributed.is_initialized():
         train_loader.sampler.set_epoch(epoch)  
@@ -165,8 +165,8 @@ def train_epoch(model, epoch, train_loader, optimizer, scheduler, config):
 # Evaluation function  
 def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):  
     model.eval()  
-    model.large_model.eval()  
-    model.small_model.eval()  
+    # model.large_model.eval()  
+    # model.small_model.eval()  
     total_loss = 0  
     progress_bar = tqdm(data_loader, desc="Evaluating", disable= torch.distributed.is_initialized() and not dist.get_rank() == 0)  
     metric_functions = dataset.get_evaluation_metrics()  

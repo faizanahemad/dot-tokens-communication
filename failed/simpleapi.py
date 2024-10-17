@@ -135,7 +135,7 @@ def chat_completions():
             input_text = "<|system|>\n" + messages[-2]['content'] + "\n<|user|>\n" + input_text + "\n<|assistant|>\n"
         # else:
         #     input_text = "<|system|>\n" + "You are a helpful assistant. Please respond to the user request." + "\n<|user|>\n" + input_text + "\n<|assistant|>\n"
-        generated_text = combine_logits_and_generate_text(input_text, max_tokens, stop, temperature)
+        generated_text: str = combine_logits_and_generate_text(input_text, max_tokens, stop, temperature)
     else:
         return jsonify({"error": "No messages provided"}), 400
 

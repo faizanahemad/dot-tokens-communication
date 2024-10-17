@@ -25,12 +25,13 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import (
     FullStateDictConfig,  
     StateDictType,  
 )  
+from SamplingMixin import SamplingMixin
 import torch.distributed as dist  
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')  
 logger = logging.getLogger(__name__)  
   
-class OneModelTransformer(nn.Module):  
+class OneModelTransformer(nn.Module, SamplingMixin):  
     def __init__(  
         self,  
         large_model_name: str,  
@@ -225,17 +226,7 @@ class OneModelTransformer(nn.Module):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                if sampling_method == "greedy":  
-                    next_token = torch.argmax(logits, dim=-1)  
-                    if idx == 1:
-                        pass
-                        # print(logits[4:6, -128:-96])
-                        # print(next_token)
-                elif sampling_method == "sample":  
-                    probs = torch.nn.functional.softmax(logits / temperature, dim=-1)  
-                    next_token = torch.multinomial(probs, num_samples=1).squeeze(1)  
-                else:  
-                    raise ValueError("Invalid sampling method. Choose 'greedy' or 'sample'.")  
+                next_token = self._sampling(logits, sampling_method, temperature)
     
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
@@ -351,13 +342,7 @@ class OneModelTransformer(nn.Module):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                if sampling_method == "greedy":  
-                    next_token = torch.argmax(logits, dim=-1)  
-                elif sampling_method == "sample":  
-                    probs = torch.nn.functional.softmax(logits / temperature, dim=-1)  
-                    next_token = torch.multinomial(probs, num_samples=1).squeeze(1)  
-                else:  
-                    raise ValueError("Invalid sampling method. Choose 'greedy' or 'sample'.")  
+                next_token = self._sampling(logits, sampling_method, temperature)
         
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
