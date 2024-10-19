@@ -1,4 +1,5 @@
 import os
+from more_itertools import run_length
 import torch
 import torch.nn as nn
 from transformers import AutoTokenizer
@@ -7,6 +8,8 @@ import time
 from model_fsdp_better_query import DualModelTransformerBetterQuery
 from utils import set_seed, create_model
 from train_fsdp import evaluate, config
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
 
 app = Flask(__name__)
 
@@ -17,7 +20,6 @@ config_test = {
     "batch_size": 16,  
     "test_subset_size": 512,  
     "max_input_length": 512,  
-    "dataset_name":  "tau/commonsense_qa", # # lighteval/mmlu "EleutherAI/truthful_qa_mc"  # "TIGER-Lab/MMLU-Pro" # "lighteval/MATH-Hard" # "tau/commonsense_qa" # "amanrangapur/Fin-Fact" # "FinanceMTEB/financial_phrasebank" # lighteval/mmlu
     "model_cls": DualModelTransformerBetterQuery,
 }  
 
@@ -45,27 +47,40 @@ model = config["model_cls"](
     enable_flash_attention=True
 )
 
+
+
 checkpoint = torch.load(saved_model_path, map_location=device)
 model.load_state_dict(checkpoint)
+
+# print(model.small_model.model.embed_tokens.weight, model.small_model.model.layers[0].self_attn.q_proj.weight)
+model.small_model = AutoModelForCausalLM.from_pretrained(config["small_model_name"], trust_remote_code=True, torch_dtype=torch.bfloat16)
+model.large_model = AutoModelForCausalLM.from_pretrained(config["large_model_name"], trust_remote_code=True, torch_dtype=torch.bfloat16)
 model.to(device)
 model.eval()
 
-tokenizer = AutoTokenizer.from_pretrained(config["small_model_name"])
+# print(model.small_model.model.embed_tokens.weight)
+# print(model.embedding_layer.weight)
+
+
+tokenizer = AutoTokenizer.from_pretrained(config["small_model_name"], trust_remote_code=True)
+tokenizer.padding_side = 'left'  
 
 def generate_text(input_text, max_tokens, stop, temperature, mode="baseline"):
-    input_ids = tokenizer.encode(input_text, return_tensors="pt").to(device)
+    input_ids = tokenizer.encode(input_text, return_tensors="pt", add_special_tokens=True).to(device)
+    # print(input_ids.shape, input_ids)
     attention_mask = torch.ones_like(input_ids)
     
     generated = model.generate(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        max_length=input_ids.shape[1] + max_tokens,
+        input_prompt=input_text,
+        max_length=max_tokens,
         temperature=temperature,
-        sampling_method="top_p" if temperature > 0 else "greedy",
+        sampling_method="greedy",
         mode=mode
     )
     
     generated_text =generated[0] if isinstance(generated, (tuple,list)) else generated
+    
+    generated_text = generated_text.replace(input_text, "").strip()
     
     for stop_sequence in stop:
         if stop_sequence in generated_text:
@@ -164,13 +179,16 @@ def completions():
     prompt = data.get('prompt', '')
     max_tokens = data.get('max_tokens', 50)
     temperature = data.get('temperature', 1.0)
-    stop = data.get('stop', [])
+    stop = data.get('stop', ['<|eot_id|>', '</s>', '<|endoftext|>', '<|user|>', '<|im_end|>', 'Human:', 'User:', '[SEP]', '<|endofassistant|>'])
     mode = data.get('mode', 'baseline')
     
     if not isinstance(stop, list):
         stop = [stop]
 
-    generated_text = generate_text(prompt, max_tokens, stop, temperature, mode)
+    if isinstance(prompt, list):
+        generated_texts = [generate_text(p, max_tokens, stop, temperature, mode).replace(p, "").strip() for p in prompt]
+    else:
+        generated_texts = [generate_text(prompt, max_tokens, stop, temperature, mode).replace(prompt, "").strip()]
 
     response = {
         "id": f"cmpl-{time.time()}",
@@ -179,16 +197,16 @@ def completions():
         "model": f"custom-{config['model_cls'].__name__}",
         "choices": [
             {
-                "text": generated_text.replace(prompt, "").strip(),
+                "text": generated_text,
                 "index": 0,
                 "logprobs": None,
                 "finish_reason": "length"
-            }
+            } for generated_text in generated_texts
         ],
         "usage": {
             "prompt_tokens": len(tokenizer.encode(prompt)),
-            "completion_tokens": len(tokenizer.encode(generated_text)) - len(tokenizer.encode(prompt)),
-            "total_tokens": len(tokenizer.encode(generated_text)),
+            "completion_tokens": [len(tokenizer.encode(generated_text)) - len(tokenizer.encode(prompt)) for generated_text in generated_texts],
+            "total_tokens": [len(tokenizer.encode(generated_text)) for generated_text in generated_texts],
         }
     }
     return jsonify(response)
@@ -199,8 +217,9 @@ def chat_completions():
     messages = data.get('messages', [])
     max_tokens = data.get('max_tokens', 50)
     temperature = data.get('temperature', 1.0)
-    stop = data.get('stop', [])
+    stop = data.get('stop', ['<|eot_id|>', '</s>', '<|endoftext|>', '<|user|>', '<|im_end|>', 'Human:', 'User:', '[SEP]', '<|endofassistant|>'])
     mode = data.get('mode', 'baseline')
+    n = data.get('n', 1)
     
     if not isinstance(stop, list):
         stop = [stop]
@@ -209,7 +228,7 @@ def chat_completions():
         input_text = messages[-1]['content']
         if len(messages) > 1 and messages[-2]['role'] == "system":
             input_text = f"<|system|>\n{messages[-2]['content']}\n<|user|>\n{input_text}\n<|assistant|>\n"
-        generated_text = generate_text(input_text, max_tokens, stop, temperature, mode)
+        generated_texts = [generate_text(input_text, max_tokens, stop, temperature, mode).replace(input_text, "").strip() for _ in range(n)]
     else:
         return jsonify({"error": "No messages provided"}), 400
 
@@ -220,18 +239,18 @@ def chat_completions():
         "model": f"custom-{config['model_cls'].__name__}",
         "usage": {
             "prompt_tokens": len(tokenizer.encode(input_text)),
-            "completion_tokens": len(tokenizer.encode(generated_text)) - len(tokenizer.encode(input_text)),
-            "total_tokens": len(tokenizer.encode(generated_text)),
+            "completion_tokens": [len(tokenizer.encode(generated_text)) - len(tokenizer.encode(input_text)) for generated_text in generated_texts],
+            "total_tokens": [len(tokenizer.encode(generated_text)) for generated_text in generated_texts],
         },
         "choices": [
             {
                 "message": {
                     "role": "assistant",
-                    "content": generated_text.replace(input_text, "").strip()
+                    "content": generated_text
                 },
                 "finish_reason": "length",
-                "index": 0
-            }
+                "index": i
+            } for i, generated_text in enumerate(generated_texts)
         ]
     }
     return jsonify(response)
