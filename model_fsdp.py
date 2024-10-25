@@ -1,4 +1,5 @@
 from cgitb import small
+from email import generator
 import torch  
 import os
 
@@ -186,6 +187,7 @@ class DualModelTransformer(nn.Module, SamplingMixin):
         # Initialize tokenizers  
         self.large_tokenizer = AutoTokenizer.from_pretrained(large_model_name, trust_remote_code=True)  
         self.small_tokenizer = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)  
+        self.tokenizer = self.small_tokenizer
         self.small_tokenizer.padding_side = 'left'  
         self.large_tokenizer.padding_side = 'left'
         if self.small_tokenizer.pad_token is None:  
@@ -384,6 +386,8 @@ class DualModelTransformer(nn.Module, SamplingMixin):
     
         with torch.no_grad():  
             generated_ids = input_ids.clone()  
+            generation_probs = torch.zeros((generated_ids.size(0), generated_ids.size(1) - 1), device=generated_ids.device)
+            top_logprobs_dict = [[{} for _ in range(generated_ids.size(1)-1)] for _ in range(generated_ids.size(0))]
             newly_generated_ids = None  
             past_key_values = None  # Initialize past_key_values as None  
     
@@ -423,10 +427,14 @@ class DualModelTransformer(nn.Module, SamplingMixin):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                next_token = self._sampling(logits, sampling_method, temperature)
+                next_token, probs, top_logprobs_dict_one_token = self._sampling(logits, sampling_method, temperature)
+                for i in range(generated_ids.size(0)):
+                    top_logprobs_dict[i].append(top_logprobs_dict_one_token[i])
     
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
+                
+                generation_probs = torch.cat([generation_probs, probs.unsqueeze(1)], dim=-1)
                 if newly_generated_ids is None:  
                     newly_generated_ids = next_token.unsqueeze(1)  
                     # print(next_token.shape, newly_generated_ids.shape)
@@ -446,7 +454,7 @@ class DualModelTransformer(nn.Module, SamplingMixin):
         # Decode final output  
         # final_output = tokenizer.decode(newly_generated_ids[0], skip_special_tokens=True)  
         final_output = newly_generated_ids
-        return final_output  
+        return final_output, generation_probs, top_logprobs_dict
     
     def compute_loss(self, logits, target_ids, loss_mask):
         # Flatten logits, target_ids, and loss_mask  
@@ -529,6 +537,8 @@ class DualModelTransformer(nn.Module, SamplingMixin):
     
             # Initialize variables for generation  
             generated_ids = input_ids.clone()  
+            generation_probs = torch.zeros((generated_ids.size(0), generated_ids.size(1) - 1), device=generated_ids.device)
+            top_logprobs_dict = [[{} for _ in range(generated_ids.size(1)-1)] for _ in range(generated_ids.size(0))]
             newly_generated_ids = None
             current_attention_mask = attention_mask.clone()  
             past_key_values = None  # Initialize past_key_values as None  
@@ -569,10 +579,14 @@ class DualModelTransformer(nn.Module, SamplingMixin):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                next_token = self._sampling(logits, sampling_method, temperature)
+                next_token, probs, top_logprobs_dict_one_token = self._sampling(logits, sampling_method, temperature)
+                for i in range(generated_ids.size(0)):
+                    top_logprobs_dict[i].append(top_logprobs_dict_one_token[i])
         
                 # Append generated token  
-                generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
+                generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)
+                
+                generation_probs = torch.cat([generation_probs, probs.unsqueeze(1)], dim=-1)
                 if newly_generated_ids is None:
                     newly_generated_ids = next_token.unsqueeze(1)
                 else:
@@ -603,7 +617,8 @@ class DualModelTransformer(nn.Module, SamplingMixin):
         # Decode final output  
         # print(f"Newly generated ids: {newly_generated_ids.shape}, generated_ids: {generated_ids.shape}, newly_generated_text: {newly_generated_text}")
         final_output = newly_generated_ids # self.small_tokenizer.decode(newly_generated_ids[0], skip_special_tokens=True)  
-        return final_output  
+        # print(generation_probs.shape)
+        return final_output, generation_probs, top_logprobs_dict
   
 
   
@@ -642,7 +657,7 @@ class DualModelTransformer(nn.Module, SamplingMixin):
         # print(input_ids[:, -32:])
         # print(input_ids.shape)
         if mode == "baseline":
-            generated = self.simple_baseline(  # generate_text # simple_generate_new_v2
+            generated, generation_probs, top_logprobs_dict = self.simple_baseline(  # generate_text # simple_generate_new_v2
                 input_ids=input_ids,  
                 attention_mask=attention_mask,  
                 max_length=max_length,
@@ -651,7 +666,7 @@ class DualModelTransformer(nn.Module, SamplingMixin):
                 small_model_or_large_model="small"
             )  
         elif mode == "large-baseline":
-            generated = self.simple_baseline(  # generate_text # simple_generate_new_v2
+            generated, generation_probs, top_logprobs_dict = self.simple_baseline(  # generate_text # simple_generate_new_v2
                 input_ids=input_ids,  
                 attention_mask=attention_mask,  
                 max_length=max_length,
@@ -659,14 +674,16 @@ class DualModelTransformer(nn.Module, SamplingMixin):
                 sampling_method=sampling_method,
                 small_model_or_large_model="large"
             )  
-        else:
-            generated = self.generate_text(  # generate_text # simple_generate_new_v2
+        elif mode == "ours":
+            generated, generation_probs, top_logprobs_dict = self.generate_text(  # generate_text # simple_generate_new_v2
                 input_ids=input_ids,  
                 attention_mask=attention_mask,  
                 max_length=max_length,
                 temperature=temperature,  
                 sampling_method=sampling_method  
             )  
+        else:
+            raise ValueError(f"Invalid mode: {mode}")
         # print(batch_size)
         # print(generated.shape)
         generated_texts = self.small_tokenizer.batch_decode(generated, skip_special_tokens=True)  
@@ -674,25 +691,8 @@ class DualModelTransformer(nn.Module, SamplingMixin):
         assert len(generated_texts) == batch_size
         for ix in range(batch_size):
             generated_texts[ix] = generated_texts[ix].replace(input_text[ix], "").replace(self.small_tokenizer.eos_token, "").replace(self.small_tokenizer.pad_token, "").strip()
-            # print(generated_texts[ix])
   
-        # for i in range(batch_size):  
-        #     generated_text = self.simple_generate_new_v2(  
-        #         input_ids[i].unsqueeze(0),  
-        #         attention_mask[i].unsqueeze(0) if attention_mask is not None else None,  
-        #         max_length,  
-        #         temperature,  
-        #         sampling_method  
-        #     )
-        #     # if generated text is tensor, then decode it
-        #     if isinstance(generated_text, torch.Tensor):
-        #         generated_text = self.small_tokenizer.batch_decode(generated_text, skip_special_tokens=True)  
-        #         generated_text = generated_text[0]
-        #     generated_text = generated_text.replace(input_text[i], "").replace(self.small_tokenizer.eos_token, "").replace(self.small_tokenizer.pad_token, "").strip()
-        #     generated_texts.append(generated_text)  
-        #     # print(f"Input: {input_text[i]}\tGenerated: {generated_text}\n")
-  
-        return generated_texts[0] if len(generated_texts) == 1 else generated_texts  
+        return generated_texts[0] if len(generated_texts) == 1 else generated_texts, (generation_probs[0] if len(generated_texts) == 1 else generation_probs).tolist(), top_logprobs_dict[0] if len(generated_texts) == 1 else top_logprobs_dict  
   
     def forward_v2(  
         self,  

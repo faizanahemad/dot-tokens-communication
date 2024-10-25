@@ -183,7 +183,7 @@ def evaluate(model, data_loader, tokenizer, dataset, config, mode="baseline"):
   
             # Generate text  
             # print(batch['input_ids'].shape)
-            generated = model.generate(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'], max_length=config["max_output_length"], mode=mode)  
+            generated, _, _ = model.generate(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'], max_length=config["max_output_length"], mode=mode)  
   
             # Convert generated tensors to text  
             if isinstance(generated, torch.Tensor):  

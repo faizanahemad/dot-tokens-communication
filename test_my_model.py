@@ -24,9 +24,9 @@ config_test = {
     "large_model_name": "meta-llama/Llama-3.2-3B",  
     "small_model_name": "meta-llama/Llama-3.2-1B-Instruct",   
     "batch_size": 16,  
-    "test_subset_size": 512,  
+    "test_subset_size": None,  
     "max_input_length": 512,  
-    "dataset_name":  "tau/commonsense_qa", # # lighteval/mmlu "EleutherAI/truthful_qa_mc"  # "TIGER-Lab/MMLU-Pro" # "lighteval/MATH-Hard" # "tau/commonsense_qa" # "amanrangapur/Fin-Fact" # "FinanceMTEB/financial_phrasebank" # lighteval/mmlu
+    "dataset_name":  "lighteval/mmlu", # # lighteval/mmlu "EleutherAI/truthful_qa_mc"  # "TIGER-Lab/MMLU-Pro" # "lighteval/MATH-Hard" # "tau/commonsense_qa" # "amanrangapur/Fin-Fact" # "FinanceMTEB/financial_phrasebank" # lighteval/mmlu
     "model_cls": DualModelTransformerBetterQuery,
 }  
 config_test["max_output_length"] = get_max_output_length(config_test["dataset_name"])
@@ -98,7 +98,7 @@ def main():
         except Exception as e:
             logger.info(f"Error in large-baseline evaluation: {e}")
     
-    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="test")  
+    test_loss, test_metrics = evaluate(model, test_loader, tokenizer, test_dataset, config, mode="ours")  
     logger.info(f"Test Loss (test mode): {test_loss:.4f}, Test Metrics: {test_metrics}")  
   
 if __name__ == "__main__":  

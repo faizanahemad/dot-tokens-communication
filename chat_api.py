@@ -70,7 +70,7 @@ def generate_text(input_text, max_tokens, stop, temperature, mode="baseline"):
     # print(input_ids.shape, input_ids)
     attention_mask = torch.ones_like(input_ids)
     
-    generated = model.generate(
+    generated, generation_probs, top_logprobs_dict = model.generate(
         input_prompt=input_text,
         max_length=max_tokens,
         temperature=temperature,
@@ -86,7 +86,7 @@ def generate_text(input_text, max_tokens, stop, temperature, mode="baseline"):
         if stop_sequence in generated_text:
             generated_text = generated_text[:generated_text.index(stop_sequence)]
     
-    return generated_text
+    return generated_text, generation_probs, top_logprobs_dict
 
 
 HTML_TEMPLATE = """
@@ -169,6 +169,8 @@ HTML_TEMPLATE = """
 </html>
 """
 
+mode_initial = "ours"
+
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -180,15 +182,17 @@ def completions():
     max_tokens = data.get('max_tokens', 50)
     temperature = data.get('temperature', 1.0)
     stop = data.get('stop', ['<|eot_id|>', '</s>', '<|endoftext|>', '<|user|>', '<|im_end|>', 'Human:', 'User:', '[SEP]', '<|endofassistant|>'])
-    mode = data.get('mode', 'baseline')
+    mode = data.get('mode', mode_initial)
     
     if not isinstance(stop, list):
         stop = [stop]
 
     if isinstance(prompt, list):
-        generated_texts = [generate_text(p, max_tokens, stop, temperature, mode).replace(p, "").strip() for p in prompt]
+        generated_texts = [generate_text(p, max_tokens, stop, temperature, mode) for p in prompt]
     else:
-        generated_texts = [generate_text(prompt, max_tokens, stop, temperature, mode).replace(prompt, "").strip()]
+        generated_texts = [generate_text(prompt, max_tokens, stop, temperature, mode)]
+        
+    # print(generated_texts)
 
     response = {
         "id": f"cmpl-{time.time()}",
@@ -199,63 +203,23 @@ def completions():
             {
                 "text": generated_text,
                 "index": 0,
-                "logprobs": None,
+                "logprobs": {"token_logprobs": generation_prob, "top_logprobs": top_logprobs_dict},
                 "finish_reason": "length"
-            } for generated_text in generated_texts
+            } for generated_text, generation_prob, top_logprobs_dict in generated_texts
         ],
         "usage": {
             "prompt_tokens": len(tokenizer.encode(prompt)),
-            "completion_tokens": [len(tokenizer.encode(generated_text)) - len(tokenizer.encode(prompt)) for generated_text in generated_texts],
-            "total_tokens": [len(tokenizer.encode(generated_text)) for generated_text in generated_texts],
+            "completion_tokens": [len(tokenizer.encode(generated_text)) - len(tokenizer.encode(prompt)) for generated_text, generation_prob, top_logprobs_dict in generated_texts],
+            "total_tokens": [len(tokenizer.encode(generated_text)) for generated_text, generation_prob, top_logprobs_dict in generated_texts],
         }
     }
     return jsonify(response)
 
-@app.route('/chat/completions', methods=['POST'])
-def chat_completions():
-    data = request.json
-    messages = data.get('messages', [])
-    max_tokens = data.get('max_tokens', 50)
-    temperature = data.get('temperature', 1.0)
-    stop = data.get('stop', ['<|eot_id|>', '</s>', '<|endoftext|>', '<|user|>', '<|im_end|>', 'Human:', 'User:', '[SEP]', '<|endofassistant|>'])
-    mode = data.get('mode', 'baseline')
-    n = data.get('n', 1)
-    
-    if not isinstance(stop, list):
-        stop = [stop]
-
-    if messages:
-        input_text = messages[-1]['content']
-        if len(messages) > 1 and messages[-2]['role'] == "system":
-            input_text = f"<|system|>\n{messages[-2]['content']}\n<|user|>\n{input_text}\n<|assistant|>\n"
-        generated_texts = [generate_text(input_text, max_tokens, stop, temperature, mode).replace(input_text, "").strip() for _ in range(n)]
-    else:
-        return jsonify({"error": "No messages provided"}), 400
-
-    response = {
-        "id": f"chatcmpl-{time.time()}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": f"custom-{config['model_cls'].__name__}",
-        "usage": {
-            "prompt_tokens": len(tokenizer.encode(input_text)),
-            "completion_tokens": [len(tokenizer.encode(generated_text)) - len(tokenizer.encode(input_text)) for generated_text in generated_texts],
-            "total_tokens": [len(tokenizer.encode(generated_text)) for generated_text in generated_texts],
-        },
-        "choices": [
-            {
-                "message": {
-                    "role": "assistant",
-                    "content": generated_text
-                },
-                "finish_reason": "length",
-                "index": i
-            } for i, generated_text in enumerate(generated_texts)
-        ]
-    }
-    return jsonify(response)
 
 if __name__ == '__main__':
     import sys
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
     app.run(debug=False, threaded=True, port=port)
+    
+    
+# lm_eval --model local-completions --tasks gsm8k --model_args model=meta-llama/Llama-3.2-3B-Instruct,base_url=http://localhost:5000/completions,num_concurrent=1,max_retries=1,tokenized_requests=False

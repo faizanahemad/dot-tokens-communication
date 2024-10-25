@@ -226,7 +226,7 @@ class OneModelTransformer(nn.Module, SamplingMixin):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                next_token = self._sampling(logits, sampling_method, temperature)
+                next_token, probs, top_logprobs_dict = self._sampling(logits, sampling_method, temperature)
     
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
@@ -342,7 +342,7 @@ class OneModelTransformer(nn.Module, SamplingMixin):
                 past_key_values = model_output.past_key_values  
     
                 # Sampling  
-                next_token = self._sampling(logits, sampling_method, temperature)
+                next_token, probs, top_logprobs_dict = self._sampling(logits, sampling_method, temperature)
         
                 # Append generated token  
                 generated_ids = torch.cat([generated_ids, next_token.unsqueeze(1)], dim=-1)  
